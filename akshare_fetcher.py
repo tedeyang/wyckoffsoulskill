@@ -1058,8 +1058,35 @@ if __name__ == "__main__":
         
         print(f"\n{'='*60}")
             
+    except ValueError as e:
+        error_msg = str(e)
+        if "No data for" in error_msg:
+            print(f"❌ 无法获取股票数据: {symbol}")
+            print()
+            print("可能原因:")
+            print("  1. 股票代码不存在或已退市")
+            print("  2. 股票已更名（如 *ST、退市等）")
+            print("  3. 该股票可能已转移到其他板块（如北交所）")
+            print("  4. 数据源暂时不可用")
+            print()
+            print("建议:")
+            print("  - 请确认股票代码正确")
+            print("  - 尝试使用股票完整名称查询")
+            print("  - 检查该股票是否已退市或更名")
+        else:
+            print(f"❌ 数据错误: {error_msg}")
+        sys.exit(1)
     except Exception as e:
         import traceback
-        print(f"❌ 分析失败: {e}")
-        traceback.print_exc()
+        error_msg = str(e)
+        if "mini_racer" in error_msg.lower() or "libmini_racer" in error_msg.lower():
+            print(f"❌ JavaScript 执行引擎错误 (这是 akshare 库的内部问题)")
+            print()
+            print("解决方法:")
+            print("  1. 请重新运行命令（间歇性问题）")
+            print("  2. 更新 akshare: pip install -U akshare")
+            print("  3. 检查网络连接稳定性")
+        else:
+            print(f"❌ 分析失败: {e}")
+            traceback.print_exc()
         sys.exit(1)
