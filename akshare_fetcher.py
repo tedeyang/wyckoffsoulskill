@@ -961,36 +961,105 @@ fetch_wyckoff_data = fetch_data_parallel
 
 
 if __name__ == "__main__":
+    import sys
     import time
     
-    test_symbols = ["601869"]
+    # Parse command line arguments
+    if len(sys.argv) > 1:
+        # Join all arguments to support stock names with spaces
+        query = ' '.join(sys.argv[1:])
+    else:
+        # Default test symbol if no argument provided
+        query = "601869"
     
-    for symbol in test_symbols:
-        print(f"\n{'='*60}")
-        print(f"Testing {symbol}...")
-        print('='*60)
+    print(f"\n{'='*60}")
+    print(f"Wyckoff VPA Analysis Tool")
+    print(f"Query: {query}")
+    print('='*60)
+    
+    # Step 1: Resolve stock code
+    print("\n[Step 1] 查询股票代码...")
+    resolved = resolve_stock_code(query)
+    
+    if not resolved['success'] and resolved['requires_clarification']:
+        print(f"⚠️  {resolved['message']}")
+        print("\n候选股票:")
+        for i, (code, name) in enumerate(resolved['matches'][:10], 1):
+            print(f"  {i}. {name} ({code})")
+        if len(resolved['matches']) > 10:
+            print(f"  ... 还有 {len(resolved['matches']) - 10} 个匹配")
+        print("\n请使用完整的股票名称或代码重新查询")
+        sys.exit(1)
+    elif not resolved['success']:
+        print(f"❌ {resolved['message']}")
+        sys.exit(1)
+    
+    symbol = resolved['code']
+    name = resolved['name'] or symbol
+    print(f"✅ 已定位: {name} ({symbol})")
+    
+    # Step 2: Run analysis
+    print(f"\n[Step 2] 执行威科夫分析...")
+    start = time.time()
+    
+    try:
+        result = quick_analysis_v2(symbol)
+        elapsed = time.time() - start
         
-        start = time.time()
-        try:
-            result = quick_analysis_v2(symbol)
-            elapsed = time.time() - start
+        print(f"✅ 分析完成 ({elapsed:.3f}s)")
+        
+        # Print summary
+        kl = result['key_levels']
+        print(f"\n{'='*60}")
+        print(f"分析报告 | {name} ({symbol}) | ¥{kl['current']}")
+        print(f"{'='*60}")
+        
+        print(f"\n【关键价位】")
+        print(f"  当前价格: ¥{kl['current']} ({kl['change_pct']}%)")
+        print(f"  TR区间: ¥{kl['tr_low_20d']} ~ ¥{kl['tr_high_20d']}")
+        print(f"  TR位置: {kl['tr_position_pct']}%")
+        print(f"  MA5/MA10/MA20: ¥{kl['ma5']} / ¥{kl['ma10']} / ¥{kl['ma20']}")
+        
+        print(f"\n【趋势与阶段】")
+        print(f"  趋势: {result['trend']}")
+        print(f"  阶段: {result['phase']}")
+        
+        print(f"\n【成交量分布】")
+        vp = result['volume_profile']
+        print(f"  POC: ¥{vp['poc']}")
+        print(f"  VA: ¥{vp['value_area_low']} ~ ¥{vp['value_area_high']}")
+        
+        print(f"\n【点数图测算】")
+        pf = result['point_figure']
+        print(f"  Box Size: ¥{pf['box_size']}")
+        print(f"  当前: {pf['current_trend']}列{pf['current_column_boxes']}格")
+        if pf['targets']:
+            t = pf['targets']
+            current = kl['current']
+            if 'bullish_neutral' in t:
+                n = t['bullish_neutral']
+                a = t['bullish_aggressive']
+                print(f"  看涨目标: 中性¥{n} (+{(n/current-1)*100:.1f}%) / 激进¥{a} (+{(a/current-1)*100:.1f}%)")
+            if 'bearish_neutral' in t:
+                n = t['bearish_neutral']
+                a = t['bearish_aggressive']
+                print(f"  看跌目标: 中性¥{n} ({(n/current-1)*100:.1f}%) / 激进¥{a} ({(a/current-1)*100:.1f}%)")
+        
+        print(f"\n【概率评估】")
+        for k, v in result['probabilities'].items():
+            print(f"  {k}: {v}%")
+        
+        print(f"\n【数据质量】")
+        dq = result['data_quality']
+        print(f"  日线: {dq['daily_bars']} 根 ({dq['daily_range']})")
+        print(f"  周线: {dq['weekly_bars']} 根 ({dq['weekly_range']})")
+        print(f"  5分钟: {dq['minute5_bars']} 根 ({dq['minute5_range']})")
+        print(f"  执行时间: {result['execution_time_ms']:.0f}ms")
+        
+        print(f"\n{'='*60}")
             
-            print(f"✅ Success in {elapsed:.3f}s ({result['execution_time_ms']:.0f}ms)")
-            
-            print(f"\nData Quality:")
-            dq = result['data_quality']
-            print(f"  日线: {dq['daily_bars']} 根 ({dq['daily_range']})")
-            print(f"  周线: {dq['weekly_bars']} 根 ({dq['weekly_range']})")
-            print(f"  5分钟: {dq['minute5_bars']} 根 ({dq['minute5_range']})")
-            
-            print(f"\nKey Levels:")
-            for k, v in result['key_levels'].items():
-                print(f"  {k}: {v}")
-            
-            print(f"\nTrend: {result['trend']}")
-            print(f"Phase: {result['phase']}")
-                
-        except Exception as e:
-            import traceback
-            print(f"❌ Error: {e}")
-            traceback.print_exc()
+    except Exception as e:
+        import traceback
+        print(f"❌ 分析失败: {e}")
+        traceback.print_exc()
+        sys.exit(1)
