@@ -1,6 +1,6 @@
 """Version information for Wyckoff VPA Skill"""
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 __author__ = "tedeyang"
 __description__ = "Wyckoff VPA analysis for Chinese A-shares"
 __license__ = "MIT"
