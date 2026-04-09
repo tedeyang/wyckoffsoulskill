@@ -7,7 +7,7 @@ description: Wyckoff VPA analysis for Chinese A-shares - high-speed parallel dat
 
 High-speed Wyckoff analysis for Chinese A-shares. **Execution time: ~1.3s** via parallel Sina data sources.
 
-⚠️ **CRITICAL RULE**: 5-Minute analysis is **MANDATORY** for entry/exit confirmation.
+⚠️ **IMPORTANT RULE**: 优先使用 5 分钟线做入场/离场确认；若分钟数据缺失，需明确降级并下调置信度。
 
 ## Installation
 
@@ -69,11 +69,11 @@ python akshare_fetcher.py analyze "600519" --analysis-mode deep
 
 **Sina** for daily/weekly/minute (parallel fetch, ~1.3s for standard, ~2s for deep)
 
-## Three-Timeframe Analysis (REQUIRED)
+## Three-Timeframe Analysis (Preferred)
 
 **Weekly** → Validates major trend and S/R levels  
 **Daily** → Identifies Wyckoff Phase and TR position  
-**5-Minute** → Mandatory execution confirmation
+**5-Minute** → Preferred execution confirmation (if available)
 
 ### 5-Minute Confirmation Rules
 
@@ -285,7 +285,7 @@ Distribution (5天)      [X]%      [高/中/低]概率派发
 
 ## Key Principles
 
-1. **5-minute is MANDATORY** - Never trade without intraday confirmation
+1. **5-minute is preferred** - Use intraday confirmation when available; if unavailable, lower confidence and state data gap
 2. **Reciprocal validation** - Weekly/Daily/5min must align for high-confidence trades
 3. **Probability, not certainty** - Express all forecasts as probabilities
 4. **Hypothesis-driven** - Define clear entry/stop/target before trading

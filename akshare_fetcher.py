@@ -56,6 +56,13 @@ warnings.filterwarnings('ignore')
 # Stock Code Lookup Functions
 # ============================================================================
 
+def _short_error(e: Exception, max_len: int = 120) -> str:
+    """Return compact error text for user-facing diagnostics."""
+    msg = str(e).strip().replace('\n', ' ')
+    if len(msg) > max_len:
+        msg = msg[:max_len] + '...'
+    return f"{type(e).__name__}: {msg}" if msg else type(e).__name__
+
 def normalize_code(code: str) -> str:
     """Normalize stock code to 6-digit format"""
     code = code.strip()
@@ -112,6 +119,7 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
     
     exact_match = None
     fuzzy_matches = []
+    remote_errors = []
     
     # 2. Exact name match
     if query in STOCK_NAME_TO_CODE:
@@ -166,8 +174,8 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
                     if len(df) > 0:
                         # Code is valid, return it
                         return (test_code, None), [], f"远程代码验证有效: {test_code}"
-            except Exception:
-                pass
+            except Exception as e:
+                remote_errors.append(f"代码验证失败({_short_error(e)})")
             
             # Method 2: Search in stock list (if available)
             try:
@@ -187,11 +195,11 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
                     if len(code_matches) > 0:
                         for _, row in code_matches.head(5).iterrows():
                             fuzzy_matches.append((str(row['代码']), str(row['名称'])))
-            except Exception:
-                pass
+            except Exception as e:
+                remote_errors.append(f"列表查询失败({_short_error(e)})")
                 
         except Exception as e:
-            pass
+            remote_errors.append(f"远程服务不可用({_short_error(e)})")
     
     # Remove duplicates from fuzzy matches
     seen = set()
@@ -209,6 +217,8 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
     elif len(unique_matches) > 1:
         return None, unique_matches[:10], f"找到 {len(unique_matches)} 个匹配，请确认"
     else:
+        if remote_errors:
+            return None, [], f"未找到 '{query}' 的匹配股票；远程查询异常: {remote_errors[0]}"
         return None, [], f"未找到 '{query}' 的匹配股票"
 
 
@@ -258,7 +268,8 @@ def resolve_stock_code(query: str) -> Dict:
         result['requires_clarification'] = True
         result['message'] = f"'{query}' 可能指以下股票，请确认："
     else:
-        result['message'] = f"未找到 '{query}' 的匹配股票，请检查名称或代码是否正确。"
+        # Keep lookup diagnostics (including remote fallback errors) if available
+        result['message'] = msg if msg else f"未找到 '{query}' 的匹配股票，请检查名称或代码是否正确。"
     
     return result
 
@@ -617,7 +628,7 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     df = daily_df.tail(200)
     highs = pd.to_numeric(df['high'], errors='coerce').values
     lows = pd.to_numeric(df['low'], errors='coerce').values
-    closes = pd.to_numeric(df['close'], errors='coerce').values
+    closes = pd.to_numeric(df['close'], errors='coerce')
     
     # Remove any NaN values
     valid_mask = ~(np.isnan(highs) | np.isnan(lows))
@@ -627,7 +638,12 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     if len(highs) < 50:
         return {'error': 'Insufficient data after cleaning'}
     
-    ltp = float(closes[-1])
+    valid_closes = closes.dropna()
+    if len(valid_closes) == 0:
+        return {'error': 'No valid close price'}
+    ltp = float(valid_closes.iloc[-1])
+    if not np.isfinite(ltp) or ltp <= 0:
+        return {'error': 'Invalid latest close price'}
     box_size = ltp * box_pct
     
     # Round box size to reasonable precision
@@ -879,7 +895,11 @@ def fetch_data_parallel(symbol: str, daily_days: int = 200, weekly_bars: int = 1
             df = fetch_minute_sina(symbol, "5", ak, pd)
             return {'minute5': df, 'minute_success': True}
         except Exception as e:
-            return {'minute5': pd.DataFrame(), 'minute_success': False}
+            return {
+                'minute5': pd.DataFrame(),
+                'minute_success': False,
+                'minute_error': _short_error(e),
+            }
     
     executor = ThreadPoolExecutor(max_workers=2)
     try:
@@ -893,7 +913,7 @@ def fetch_data_parallel(symbol: str, daily_days: int = 200, weekly_bars: int = 1
             try:
                 results.update(future.result())
             except Exception as e:
-                results[f'{task}_error'] = str(e)
+                results[f'{task}_error'] = _short_error(e)
     finally:
         executor.shutdown(wait=False)
     
@@ -901,8 +921,9 @@ def fetch_data_parallel(symbol: str, daily_days: int = 200, weekly_bars: int = 1
         try:
             weekly = resample_weekly_fast(results['daily_full'], pd).tail(weekly_bars).reset_index(drop=True)
             results['weekly'] = weekly
-        except Exception:
+        except Exception as e:
             results['weekly'] = pd.DataFrame()
+            results['weekly_error'] = _short_error(e)
     
     # Add analysis mode metadata
     results['analysis_mode'] = analysis_mode
@@ -1041,8 +1062,15 @@ def quick_analysis_v2(symbol: str, analysis_mode: str = 'standard') -> Dict:
         'daily_range': format_date_range(daily_start, daily_end) if daily_start and daily_end else 'N/A',
         'weekly_range': format_date_range(weekly_start, weekly_end) if weekly_start and weekly_end else 'N/A',
         'minute5_range': f"{minute_start_fmt} ~ {minute_end_fmt}" if minute_start_fmt and minute_end_fmt else 'N/A',
+        'minute_success': data.get('minute_success', len(minute5) > 0),
         'fetch_time_ms': round((time.time() - start_time) * 1000, 1)
     }
+    errors = {}
+    for key in ['minute_error', 'daily_error', 'weekly_error']:
+        if data.get(key):
+            errors[key] = data[key]
+    if errors:
+        data_quality['errors'] = errors
     
     probabilities = calculate_probabilities(wyckoff_signals, trend, tr_position, minute_analysis)
     

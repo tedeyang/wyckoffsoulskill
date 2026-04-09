@@ -5,7 +5,6 @@ Uses retry mechanism to handle network issues
 """
 
 import time
-import json
 
 
 def fetch_stock_list_with_retry(max_retries=5, delay=2):
@@ -121,6 +120,7 @@ def generate_constants_file(output_file='stock_constants.py'):
 def generate_aliases(name_to_code):
     """Generate common aliases for stock names"""
     aliases = {}
+    conflicts = {}
     
     # Common company abbreviations
     common_patterns = {
@@ -199,21 +199,20 @@ def generate_aliases(name_to_code):
     for full_name, alias_list in common_patterns.items():
         if full_name in name_to_code:
             for alias in alias_list:
-                aliases.setdefault(alias, [])
-                if full_name not in aliases[alias]:
-                    aliases[alias].append(full_name)
+                if alias in aliases and aliases[alias] != full_name:
+                    conflicts.setdefault(alias, [])
+                    conflicts[alias].append(full_name)
+                    continue
+                aliases[alias] = full_name
 
-    # Keep backward compatibility:
-    # - single target alias -> "str"
-    # - multi target alias -> ["name1", "name2"] (requires clarification)
-    normalized_aliases = {}
-    for alias, targets in aliases.items():
-        if len(targets) == 1:
-            normalized_aliases[alias] = targets[0]
-        else:
-            normalized_aliases[alias] = targets
+    if conflicts:
+        print("⚠️ 检测到别名冲突，已保留首次映射并跳过后续冲突：")
+        for alias in sorted(conflicts):
+            kept = aliases[alias]
+            skipped = ", ".join(conflicts[alias])
+            print(f"  - {alias}: 保留 {kept}，跳过 {skipped}")
     
-    return normalized_aliases
+    return aliases
 
 
 if __name__ == '__main__':
