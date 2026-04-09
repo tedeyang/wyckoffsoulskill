@@ -48,6 +48,17 @@ def normalize_code(code: str) -> str:
     return code
 
 
+def normalize_name(name: str) -> str:
+    """Normalize stock name for fuzzy matching"""
+    # Remove spaces
+    name = name.replace(' ', '').replace('  ', '')
+    # Convert full-width chars to half-width
+    name = name.replace('Ａ', 'A').replace('Ｂ', 'B').replace('Ｈ', 'H')
+    name = name.replace('（', '(').replace('）', ')')
+    name = name.replace('【', '[').replace('】', ']')
+    return name.lower()
+
+
 def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]], str]:
     """
     Lookup stock code by name, code, or alias.
@@ -92,10 +103,18 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
             return (code, full_name), [], f"简称匹配: {query} -> {full_name}"
     
     # 4. Fuzzy name match (contains query)
-    query_lower = query.lower()
+    # Use normalized names for matching
+    query_normalized = normalize_name(query)
     for name, code in STOCK_NAME_TO_CODE.items():
-        if query_lower in name.lower():
+        name_normalized = normalize_name(name)
+        if query_normalized in name_normalized:
             fuzzy_matches.append((code, name))
+    
+    # Also try reverse: if any stock name contains the query
+    if not fuzzy_matches:
+        for name, code in STOCK_NAME_TO_CODE.items():
+            if query_lower in name.lower():
+                fuzzy_matches.append((code, name))
     
     # 5. Try akshare API if no local matches
     if not exact_match and not fuzzy_matches:
