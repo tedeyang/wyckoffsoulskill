@@ -42,9 +42,29 @@ analysis = quick_analysis("002156")
 
 **多匹配处理**: 如果查询返回多个可能股票，AI 应向用户展示列表并请求确认。
 
+## Analysis Modes
+
+### Standard Mode (默认)
+- **日线**: 200 根 (~10个月)
+- **周线**: 100 根 (~2年)
+- **适用**: 波段交易、中期持仓
+
+### Deep Mode (深度/长线分析)
+触发关键词: `长线分析`、`深度研究`、`重度分析`、`long`、`deep`
+
+- **日线**: 500 根 (~2年)
+- **周线**: 200 根 (~4年)
+- **适用**: 长期投资、大周期结构识别
+- **AI 要求**: 必须进行多周期结构转换的深度解读
+
+```python
+# 深度分析调用
+result = quick_analysis("600519", analysis_mode="deep")
+```
+
 ## Data Source
 
-**Sina** for daily/weekly/minute (parallel fetch, ~1.3s total)
+**Sina** for daily/weekly/minute (parallel fetch, ~1.3s for standard, ~2s for deep)
 
 ## Three-Timeframe Analysis (REQUIRED)
 
@@ -105,6 +125,34 @@ Distribution (5天): [Z]%
 当前建议:
   持仓者: [建议]
   空仓者: [建议]
+```
+
+### 5. Deep Analysis Multi-Cycle Interpretation (深度分析专用)
+
+当 `analysis_mode="deep"` 时，AI 必须进行以下多周期转换深度解读：
+
+```
+【大周期→小周期结构嵌套分析】
+
+月线/季线背景 (通过200周线推导):
+  大周期趋势: [bullish/bearish/sideways]
+  主要TR区间: ¥[low] ~ ¥[high] (宽度[X]%)
+  当前处于大周期位置: [X]% → [accumulation/distribution/markup/markdown]
+
+周线中期结构 (200周):
+  中期TR数量: [N]个 identifiable trading ranges
+  关键突破/跌破点: [list key levels]
+  中期Wyckoff阶段: [Phase]
+
+日线当前结构 (500日):
+  与周线TR的嵌套关系: [当前日线TR位于周线TR的X%位置]
+  小周期Spring/Upthrust验证: [yes/no with evidence]
+  多周期共振评估: [high/medium/low confidence]
+
+结构转换预测:
+  大周期突破条件: ¥[price] + volume > [X]
+  时间窗口: [N] weeks/days
+  转换概率: [X]%
 ```
 
 ## Report Output Format (输出内容的开头部分)

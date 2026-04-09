@@ -828,8 +828,17 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     }
 
 
-def fetch_data_parallel(symbol: str, daily_days: int = 200) -> Dict:
-    """PARALLEL fetch using Sina"""
+def fetch_data_parallel(symbol: str, daily_days: int = 200, weekly_bars: int = 100, 
+                        analysis_mode: str = 'standard') -> Dict:
+    """
+    PARALLEL fetch using Sina
+    
+    Args:
+        symbol: Stock code
+        daily_days: Number of daily bars (200 for standard, 500 for deep)
+        weekly_bars: Number of weekly bars (100 for standard, 200 for deep)
+        analysis_mode: 'standard' or 'deep' - affects data depth and AI interpretation
+    """
     ak = _import_akshare()
     pd = _import_pandas()
     results = {}
@@ -864,10 +873,17 @@ def fetch_data_parallel(symbol: str, daily_days: int = 200) -> Dict:
     
     if 'daily_full' in results:
         try:
-            weekly = resample_weekly_fast(results['daily_full'], pd).tail(100).reset_index(drop=True)
+            weekly = resample_weekly_fast(results['daily_full'], pd).tail(weekly_bars).reset_index(drop=True)
             results['weekly'] = weekly
         except:
             results['weekly'] = pd.DataFrame()
+    
+    # Add analysis mode metadata
+    results['analysis_mode'] = analysis_mode
+    results['data_config'] = {
+        'daily_days': daily_days,
+        'weekly_bars': weekly_bars
+    }
     
     return results
 
@@ -887,13 +903,28 @@ def format_date_range(start_date, end_date, fmt='%Y-%m-%d'):
     return f"{start} ~ {end}"
 
 
-def quick_analysis_v2(symbol: str) -> Dict:
-    """Ultra-fast enhanced analysis with detailed data quality report"""
+def quick_analysis_v2(symbol: str, analysis_mode: str = 'standard') -> Dict:
+    """
+    Ultra-fast enhanced analysis with detailed data quality report
+    
+    Args:
+        symbol: Stock code (e.g., '600519')
+        analysis_mode: 'standard' (200d/100w) or 'deep' (500d/200w) for long-term analysis
+    """
     import time
     start_time = time.time()
     
+    # Data configuration based on analysis mode
+    if analysis_mode == 'deep':
+        daily_days = 500
+        weekly_bars = 200
+    else:  # standard
+        daily_days = 200
+        weekly_bars = 100
+    
     pd = _import_pandas()
-    data = fetch_data_parallel(symbol, daily_days=200)
+    data = fetch_data_parallel(symbol, daily_days=daily_days, weekly_bars=weekly_bars,
+                               analysis_mode=analysis_mode)
     
     daily = data.get('daily', pd.DataFrame())
     weekly = data.get('weekly', pd.DataFrame())
@@ -994,6 +1025,7 @@ def quick_analysis_v2(symbol: str) -> Dict:
     
     return {
         'symbol': symbol,
+        'analysis_mode': analysis_mode,
         'key_levels': key_levels,
         'trend': trend,
         'phase': phase,
@@ -1017,16 +1049,25 @@ if __name__ == "__main__":
     import time
     
     # Parse command line arguments
-    if len(sys.argv) > 1:
-        # Join all arguments to support stock names with spaces
-        query = ' '.join(sys.argv[1:])
+    # Support: python akshare_fetcher.py "茅台" [deep]
+    analysis_mode = 'standard'
+    query_args = []
+    
+    for arg in sys.argv[1:]:
+        if arg.lower() in ['deep', 'depth', 'long', 'longterm', '重度', '深度', '长线']:
+            analysis_mode = 'deep'
+        else:
+            query_args.append(arg)
+    
+    if query_args:
+        query = ' '.join(query_args)
     else:
-        # Default test symbol if no argument provided
         query = "601869"
     
     print(f"\n{'='*60}")
     print(f"Wyckoff VPA Analysis Tool")
     print(f"Query: {query}")
+    print(f"Mode: {analysis_mode}")
     print('='*60)
     
     # Step 1: Resolve stock code
@@ -1051,19 +1092,22 @@ if __name__ == "__main__":
     print(f"✅ 已定位: {name} ({symbol})")
     
     # Step 2: Run analysis
-    print(f"\n[Step 2] 执行威科夫分析...")
+    print(f"\n[Step 2] 执行威科夫分析 ({'深度模式' if analysis_mode == 'deep' else '标准模式'})...")
     start = time.time()
     
     try:
-        result = quick_analysis_v2(symbol)
+        result = quick_analysis_v2(symbol, analysis_mode=analysis_mode)
         elapsed = time.time() - start
         
         print(f"✅ 分析完成 ({elapsed:.3f}s)")
         
         # Print summary
         kl = result['key_levels']
+        dq = result['data_quality']
+        mode_display = "深度分析" if result['analysis_mode'] == 'deep' else "标准分析"
         print(f"\n{'='*60}")
-        print(f"分析报告 | {name} ({symbol}) | ¥{kl['current']}")
+        print(f"威科夫分析报告 | {name} ({symbol}) | ¥{kl['current']}")
+        print(f"分析模式: {mode_display} | 日线:{dq['daily_bars']}根 周线:{dq['weekly_bars']}根")
         print(f"{'='*60}")
         
         print(f"\n【关键价位】")
@@ -1101,8 +1145,7 @@ if __name__ == "__main__":
         for k, v in result['probabilities'].items():
             print(f"  {k}: {v}%")
         
-        print(f"\n【数据质量】")
-        dq = result['data_quality']
+        print(f"\n【数据质量详情】")
         print(f"  日线: {dq['daily_bars']} 根 ({dq['daily_range']})")
         print(f"  周线: {dq['weekly_bars']} 根 ({dq['weekly_range']})")
         print(f"  5分钟: {dq['minute5_bars']} 根 ({dq['minute5_range']})")
