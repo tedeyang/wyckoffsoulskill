@@ -105,6 +105,7 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
     # 4. Fuzzy name match (contains query)
     # Use normalized names for matching
     query_normalized = normalize_name(query)
+    query_lower = query.lower()
     for name, code in STOCK_NAME_TO_CODE.items():
         name_normalized = normalize_name(name)
         if query_normalized in name_normalized:

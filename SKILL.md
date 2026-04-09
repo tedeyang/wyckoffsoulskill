@@ -101,7 +101,7 @@ Distribution (5天): [Z]%
   空仓者: [建议]
 ```
 
-### 5. Report Output Format (REQUIRED)
+## Report Output Format (输出内容的开头部分)
 
 ```
 ═══════════════════════════════════════════════════════════════

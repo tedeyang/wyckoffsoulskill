@@ -13,7 +13,7 @@
 ## Installation
 
 ```bash
-pip install akshare
+pip install akshare pandas numpy
 ```
 
 ## Quick Start
