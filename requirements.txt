@@ -1,0 +1,14 @@
+# Wyckoff VPA Skill Dependencies
+# Python 3.8+ required
+
+# Data fetching and processing
+akshare>=1.10.0
+pandas>=1.5.0
+numpy>=1.21.0
+
+# Optional: for better HTTP handling (akshare uses requests internally)
+requests>=2.28.0
+
+# Optional: for improved data processing performance
+# lxml>=4.9.0
+# beautifulsoup4>=4.11.0

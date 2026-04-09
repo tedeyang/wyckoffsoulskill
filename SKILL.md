@@ -9,6 +9,12 @@ High-speed Wyckoff analysis for Chinese A-shares. **Execution time: ~1.3s** via 
 
 ⚠️ **CRITICAL RULE**: 5-Minute analysis is **MANDATORY** for entry/exit confirmation.
 
+## Installation
+
+```bash
+pip install -r requirements.txt
+```
+
 ## Quick Start
 
 ```python

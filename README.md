@@ -12,8 +12,16 @@
 
 ## Installation
 
+### Using requirements.txt (Recommended)
+
 ```bash
-pip install akshare pandas numpy
+pip install -r requirements.txt
+```
+
+### Manual Installation
+
+```bash
+pip install akshare>=1.10.0 pandas>=1.5.0 numpy>=1.21.0
 ```
 
 ## Quick Start
