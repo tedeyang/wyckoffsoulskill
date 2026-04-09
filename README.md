@@ -1,4 +1,4 @@
-# Wyckoff VPA Skill v0.3.2
+# Wyckoff VPA Skill v0.3.3
 
 威科夫量价分析 (Wyckoff Volume-Price Analysis) Skill for Chinese A-shares.
 
