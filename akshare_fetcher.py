@@ -48,39 +48,8 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 import warnings
 warnings.filterwarnings('ignore')
-
-
-# ============================================================================
-# Data Caching
-# ============================================================================
-
-# Cache for stock data (TTL: 60 seconds to balance freshness and performance)
-_data_cache = {}
-_cache_timestamp = {}
-_CACHE_TTL_SECONDS = 60
-
-def _get_cached_data(symbol: str):
-    """Get data from cache if valid"""
-    import time
-    if symbol in _data_cache:
-        timestamp = _cache_timestamp.get(symbol, 0)
-        if time.time() - timestamp < _CACHE_TTL_SECONDS:
-            return _data_cache[symbol]
-    return None
-
-def _set_cached_data(symbol: str, data: dict):
-    """Store data in cache with timestamp"""
-    import time
-    _data_cache[symbol] = data
-    _cache_timestamp[symbol] = time.time()
-
-def clear_data_cache():
-    """Clear all cached data"""
-    _data_cache.clear()
-    _cache_timestamp.clear()
 
 
 # ============================================================================
@@ -859,14 +828,8 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     }
 
 
-def fetch_data_parallel(symbol: str, daily_days: int = 120, use_cache: bool = True) -> Dict:
-    """PARALLEL fetch using Sina with optional caching"""
-    # Check cache first
-    if use_cache:
-        cached = _get_cached_data(symbol)
-        if cached is not None:
-            return cached
-    
+def fetch_data_parallel(symbol: str, daily_days: int = 120) -> Dict:
+    """PARALLEL fetch using Sina"""
     ak = _import_akshare()
     pd = _import_pandas()
     results = {}
@@ -905,10 +868,6 @@ def fetch_data_parallel(symbol: str, daily_days: int = 120, use_cache: bool = Tr
             results['weekly'] = weekly
         except:
             results['weekly'] = pd.DataFrame()
-    
-    # Store in cache
-    if use_cache:
-        _set_cached_data(symbol, results)
     
     return results
 
