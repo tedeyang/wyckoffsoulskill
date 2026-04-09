@@ -25,6 +25,7 @@ def _import_stock_constants():
         # Return empty dicts if constants file not found
         return {}, {}, {}
 
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -797,7 +798,8 @@ def fetch_data_parallel(symbol: str, daily_days: int = 120) -> Dict:
             print(f"Minute fetch error: {e}")
             return {'minute5': pd.DataFrame(), 'minute_success': False}
     
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
         futures = {
             executor.submit(fetch_daily): 'daily',
             executor.submit(fetch_minute): 'minute'
@@ -809,6 +811,8 @@ def fetch_data_parallel(symbol: str, daily_days: int = 120) -> Dict:
                 results.update(future.result())
             except Exception as e:
                 results[f'{task}_error'] = str(e)
+    finally:
+        executor.shutdown(wait=False)
     
     if 'daily_full' in results:
         try:
@@ -1075,7 +1079,9 @@ if __name__ == "__main__":
             print("  - 检查该股票是否已退市或更名")
         else:
             print(f"❌ 数据错误: {error_msg}")
-        sys.exit(1)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
     except Exception as e:
         import traceback
         error_msg = str(e)
@@ -1089,4 +1095,6 @@ if __name__ == "__main__":
         else:
             print(f"❌ 分析失败: {e}")
             traceback.print_exc()
-        sys.exit(1)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
