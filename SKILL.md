@@ -12,9 +12,29 @@ High-speed Wyckoff analysis for Chinese A-shares. **Execution time: ~1.3s** via 
 ## Quick Start
 
 ```python
-from akshare_fetcher import quick_analysis
-result = quick_analysis("603699")
+from akshare_fetcher import quick_analysis, resolve_stock_code
+
+# 支持股票名称、简称、代码查询
+result = resolve_stock_code("通富微电")  # 返回: {'code': '002156', 'name': '通富微电', ...}
+result = resolve_stock_code("茅台")      # 返回: {'code': '600519', 'name': '贵州茅台', ...}
+result = resolve_stock_code("002840")    # 返回: {'code': '002840', 'name': '华统股份', ...}
+
+# 模糊匹配返回多个结果时需要用户确认
+# 返回: {'matches': [('002156', '通富微电'), ('688123', '其他微电')], 'requires_clarification': True}
+
+# 执行分析
+analysis = quick_analysis("002156")
 ```
+
+### 股票代码查询
+
+支持以下查询方式：
+1. **完整名称**: `通富微电` → `002156`
+2. **简称/别名**: `茅台` → `贵州茅台` → `600519`
+3. **标准代码**: `002156` → `002156`
+4. **带前缀代码**: `sh600519` / `sz002156`
+
+**多匹配处理**: 如果查询返回多个可能股票，AI 应向用户展示列表并请求确认。
 
 ## Data Source
 

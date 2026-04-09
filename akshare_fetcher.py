@@ -16,11 +16,191 @@ def _import_numpy():
     import numpy as np
     return np
 
+def _import_stock_constants():
+    """Import stock constants with fallback"""
+    try:
+        from stock_constants import STOCK_NAME_TO_CODE, STOCK_CODE_TO_NAME, STOCK_ALIASES
+        return STOCK_NAME_TO_CODE, STOCK_CODE_TO_NAME, STOCK_ALIASES
+    except ImportError:
+        # Return empty dicts if constants file not found
+        return {}, {}, {}
+
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 warnings.filterwarnings('ignore')
+
+
+# ============================================================================
+# Stock Code Lookup Functions
+# ============================================================================
+
+def normalize_code(code: str) -> str:
+    """Normalize stock code to 6-digit format"""
+    code = code.strip()
+    # Remove sh/sz prefix
+    if code.startswith(('sh', 'sz')):
+        code = code[2:]
+    # Remove .SS/.SZ suffix
+    if '.' in code:
+        code = code.split('.')[0]
+    return code
+
+
+def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]], str]:
+    """
+    Lookup stock code by name, code, or alias.
+    
+    Returns:
+        - exact_match: (code, name) if exact match found, None otherwise
+        - fuzzy_matches: list of (code, name) tuples for partial matches
+        - message: status message
+    
+    Priority:
+    1. Exact code match (6 digits)
+    2. Exact name match
+    3. Alias match
+    4. Fuzzy name match (contains query)
+    5. Akshare API fallback (if no local match)
+    """
+    query = query.strip()
+    STOCK_NAME_TO_CODE, STOCK_CODE_TO_NAME, STOCK_ALIASES = _import_stock_constants()
+    
+    # 1. Exact code match (normalized)
+    normalized = normalize_code(query)
+    if len(normalized) == 6 and normalized.isdigit():
+        if normalized in STOCK_CODE_TO_NAME:
+            return (normalized, STOCK_CODE_TO_NAME[normalized]), [], f"代码匹配: {normalized}"
+        else:
+            # Code format valid but not in local DB, will try akshare later
+            return (normalized, None), [], f"代码格式有效: {normalized}"
+    
+    exact_match = None
+    fuzzy_matches = []
+    
+    # 2. Exact name match
+    if query in STOCK_NAME_TO_CODE:
+        code = STOCK_NAME_TO_CODE[query]
+        return (code, query), [], f"精确名称匹配: {query}"
+    
+    # 3. Alias match
+    if query in STOCK_ALIASES:
+        full_name = STOCK_ALIASES[query]
+        if full_name in STOCK_NAME_TO_CODE:
+            code = STOCK_NAME_TO_CODE[full_name]
+            return (code, full_name), [], f"简称匹配: {query} -> {full_name}"
+    
+    # 4. Fuzzy name match (contains query)
+    query_lower = query.lower()
+    for name, code in STOCK_NAME_TO_CODE.items():
+        if query_lower in name.lower():
+            fuzzy_matches.append((code, name))
+    
+    # 5. Try akshare API if no local matches
+    if not exact_match and not fuzzy_matches:
+        try:
+            ak = _import_akshare()
+            # Try to get stock info from various sources
+            
+            # Method 1: Try individual stock lookup
+            try:
+                test_code = normalize_code(query)
+                if len(test_code) == 6:
+                    # Try fetching to verify
+                    sina_sym = _to_sina_symbol(test_code)
+                    df = ak.stock_zh_a_daily(symbol=sina_sym, adjust="qfq")
+                    if len(df) > 0:
+                        # Code is valid, return it
+                        return (test_code, None), [], f"远程代码验证有效: {test_code}"
+            except:
+                pass
+            
+            # Method 2: Search in stock list (if available)
+            try:
+                spot_df = ak.stock_zh_a_spot_em()
+                spot_df['代码'] = spot_df['代码'].astype(str).str.strip()
+                spot_df['名称'] = spot_df['名称'].astype(str).str.strip()
+                
+                # Search by name
+                name_matches = spot_df[spot_df['名称'].str.contains(query, case=False, na=False)]
+                if len(name_matches) > 0:
+                    for _, row in name_matches.head(5).iterrows():
+                        fuzzy_matches.append((str(row['代码']), str(row['名称'])))
+                
+                # Search by code
+                if len(query) >= 3:
+                    code_matches = spot_df[spot_df['代码'].str.contains(query, na=False)]
+                    if len(code_matches) > 0:
+                        for _, row in code_matches.head(5).iterrows():
+                            fuzzy_matches.append((str(row['代码']), str(row['名称'])))
+            except:
+                pass
+                
+        except Exception as e:
+            pass
+    
+    # Remove duplicates from fuzzy matches
+    seen = set()
+    unique_matches = []
+    for code, name in fuzzy_matches:
+        if code not in seen:
+            seen.add(code)
+            unique_matches.append((code, name))
+    
+    if exact_match:
+        return exact_match, [], "精确匹配"
+    elif len(unique_matches) == 1:
+        code, name = unique_matches[0]
+        return (code, name), [], f"唯一匹配: {name}"
+    elif len(unique_matches) > 1:
+        return None, unique_matches[:10], f"找到 {len(unique_matches)} 个匹配，请确认"
+    else:
+        return None, [], f"未找到 '{query}' 的匹配股票"
+
+
+def resolve_stock_code(query: str) -> Dict:
+    """
+    Resolve stock code with full details for AI handling.
+    
+    Returns dict with:
+    - success: bool
+    - code: resolved code (if single match)
+    - name: resolved name (if available)
+    - matches: list of alternatives (if multiple matches)
+    - message: user-friendly message
+    - requires_clarification: bool
+    """
+    exact, fuzzy, msg = lookup_stock_code(query)
+    
+    result = {
+        'success': False,
+        'code': None,
+        'name': None,
+        'matches': [],
+        'message': msg,
+        'requires_clarification': False
+    }
+    
+    if exact:
+        result['success'] = True
+        result['code'] = exact[0]
+        result['name'] = exact[1]
+        if exact[1]:
+            result['message'] = f"已定位: {exact[1]} ({exact[0]})"
+        else:
+            result['message'] = f"已定位股票代码: {exact[0]}"
+    elif fuzzy:
+        result['matches'] = fuzzy
+        result['requires_clarification'] = True
+        result['message'] = f"'{query}' 可能指以下股票，请确认："
+    else:
+        result['message'] = f"未找到 '{query}' 的匹配股票，请检查名称或代码是否正确。"
+    
+    return result
+
+
+# ============================================================================
 
 
 def _to_sina_symbol(symbol: str) -> str:

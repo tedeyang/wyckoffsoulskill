@@ -4,6 +4,7 @@
 
 ## Features
 
+- **智能股票查询**: 支持名称/简称/代码模糊查询
 - **高速数据获取**: ~1.3s 并行获取日线/周线/5分钟数据
 - **三周期分析**: 周线(趋势) + 日线(阶段) + 5分钟(确认)
 - **点数图测算**: Box=1%×LTP, 3格反转, 200日回看
@@ -18,10 +19,27 @@ pip install akshare
 ## Quick Start
 
 ```python
-from akshare_fetcher import quick_analysis_v2
+from akshare_fetcher import quick_analysis_v2, resolve_stock_code
 
-result = quick_analysis_v2("002156")  # 通富微电
-print(result)
+# Step 1: 查询股票代码
+result = resolve_stock_code("通富微电")  # 名称查询
+result = resolve_stock_code("茅台")      # 简称查询
+result = resolve_stock_code("002840")    # 代码查询
+
+# Step 2: 执行分析
+analysis = quick_analysis_v2("002156")
+print(analysis)
+```
+
+### 股票查询示例
+
+```python
+# 精确匹配
+resolve_stock_code("通富微电")  # → {'code': '002156', 'name': '通富微电', 'success': True}
+resolve_stock_code("茅台")      # → {'code': '600519', 'name': '贵州茅台', 'success': True}
+
+# 模糊匹配 (需要用户确认)
+resolve_stock_code("微电")  # → {'matches': [('002156', '通富微电'), ...], 'requires_clarification': True}
 ```
 
 ## Report Output
