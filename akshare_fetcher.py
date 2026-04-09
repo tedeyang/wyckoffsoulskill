@@ -864,7 +864,7 @@ def fetch_data_parallel(symbol: str, daily_days: int = 200) -> Dict:
     
     if 'daily_full' in results:
         try:
-            weekly = resample_weekly_fast(results['daily_full'], pd).tail(60).reset_index(drop=True)
+            weekly = resample_weekly_fast(results['daily_full'], pd).tail(100).reset_index(drop=True)
             results['weekly'] = weekly
         except:
             results['weekly'] = pd.DataFrame()
