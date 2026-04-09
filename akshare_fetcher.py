@@ -828,7 +828,7 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     }
 
 
-def fetch_data_parallel(symbol: str, daily_days: int = 120) -> Dict:
+def fetch_data_parallel(symbol: str, daily_days: int = 200) -> Dict:
     """PARALLEL fetch using Sina"""
     ak = _import_akshare()
     pd = _import_pandas()
@@ -893,7 +893,7 @@ def quick_analysis_v2(symbol: str) -> Dict:
     start_time = time.time()
     
     pd = _import_pandas()
-    data = fetch_data_parallel(symbol, daily_days=120)
+    data = fetch_data_parallel(symbol, daily_days=200)
     
     daily = data.get('daily', pd.DataFrame())
     weekly = data.get('weekly', pd.DataFrame())
