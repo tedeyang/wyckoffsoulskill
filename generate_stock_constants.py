@@ -199,9 +199,21 @@ def generate_aliases(name_to_code):
     for full_name, alias_list in common_patterns.items():
         if full_name in name_to_code:
             for alias in alias_list:
-                aliases[alias] = full_name
+                aliases.setdefault(alias, [])
+                if full_name not in aliases[alias]:
+                    aliases[alias].append(full_name)
+
+    # Keep backward compatibility:
+    # - single target alias -> "str"
+    # - multi target alias -> ["name1", "name2"] (requires clarification)
+    normalized_aliases = {}
+    for alias, targets in aliases.items():
+        if len(targets) == 1:
+            normalized_aliases[alias] = targets[0]
+        else:
+            normalized_aliases[alias] = targets
     
-    return aliases
+    return normalized_aliases
 
 
 if __name__ == '__main__':

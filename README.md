@@ -1,4 +1,4 @@
-# Wyckoff VPA Skill v0.4.6
+# Wyckoff VPA Skill v0.5.1
 
 威科夫量价分析 (Wyckoff Volume-Price Analysis) Skill for Chinese A-shares.
 
@@ -232,62 +232,45 @@ pip install akshare>=1.10.0 pandas>=1.5.0 numpy>=1.21.0
 
 ## 🚀 Quick Start
 
-### Python API
+### CLI JSON API (Recommended)
 
-```python
-from akshare_fetcher import quick_analysis_v2, resolve_stock_code
+```bash
+# ========== Step 1: 股票代码查询（返回 resolve_stock_code 同结构 JSON）==========
 
-# ========== Step 1: 股票代码查询 ==========
+python akshare_fetcher.py resolve "通富微电"
+python akshare_fetcher.py resolve "茅台"
+python akshare_fetcher.py resolve "002840"
+python akshare_fetcher.py resolve "SH600519"
 
-# 方式1: 完整名称
-result = resolve_stock_code("通富微电")
-# → {'code': '002156', 'name': '通富微电', 'success': True}
+# 模糊查询（requires_clarification=true）
+python akshare_fetcher.py resolve "科技"
 
-# 方式2: 简称/别名
-result = resolve_stock_code("茅台")
-# → {'code': '600519', 'name': '贵州茅台', 'success': True}
+# ========== Step 2: 执行分析（默认 compact JSON，避免终端截断）==========
 
-# 方式3: 股票代码
-result = resolve_stock_code("002840")
-# → {'code': '002840', 'name': '华统股份', 'success': True}
+# 标准模式（默认）
+python akshare_fetcher.py analyze "002156"
 
-# 方式4: 模糊查询 (返回多个候选)
-result = resolve_stock_code("科技")
-# → {'matches': [('000100', 'TCL科技'), ('301366', '一博科技'), ...], 
-#     'requires_clarification': True}
+# 深度模式
+python akshare_fetcher.py analyze "600519" --analysis-mode deep
 
+# 便于阅读的格式化输出
+python akshare_fetcher.py analyze "600519" --analysis-mode deep --pretty
 
-# ========== Step 2: 执行分析 ==========
-
-# 标准模式 (默认) - 200日/100周线，适合波段交易
-result = quick_analysis_v2("002156")
-
-# 深度模式 - 500日/200周线，适合长线投资
-result = quick_analysis_v2("600519", analysis_mode="deep")
-
-
-# ========== Step 3: 解读结果 ==========
-
-print(f"当前价格: ¥{result['key_levels']['current']}")
-print(f"趋势: {result['trend']}")  # strong_bullish / bullish / bearish / strong_bearish
-print(f"阶段: {result['phase']}")  # Phase A/B/C/D
-print(f"TR位置: {result['key_levels']['tr_position_pct']}%")
-print(f"Spring概率: {result['probabilities']['spring_next_5d']}%")
+# 需要完整原始结构（等同 quick_analysis_v2 返回）时使用 --full
+python akshare_fetcher.py analyze "600519" --analysis-mode deep --full
 ```
 
 ### Command Line
 
 ```bash
 # 标准分析
-python akshare_fetcher.py "中国中免"
+python akshare_fetcher.py analyze "中国中免"
 
-# 深度分析 (关键字触发)
-python akshare_fetcher.py "茅台" "深度"
-python akshare_fetcher.py "云天化" "long"
-python akshare_fetcher.py "通富微电" "重度分析"
+# 深度分析
+python akshare_fetcher.py analyze "茅台" --analysis-mode deep
 
-# 支持的深度模式关键字:
-# deep / depth / long / longterm / 重度 / 深度 / 长线
+# 代码解析
+python akshare_fetcher.py resolve "隆基"
 ```
 
 ---
@@ -443,10 +426,8 @@ mixed: 周期之间矛盾 = 观望
 
 ### 示例1: 通富微电 (002156) - Spring交易
 
-```python
-from akshare_fetcher import quick_analysis_v2
-
-result = quick_analysis_v2("002156")
+```bash
+python akshare_fetcher.py analyze "002156" --pretty
 
 # 关键信号:
 # - TR位置: 55.2% (Phase C - Test of Supply)
@@ -463,8 +444,8 @@ result = quick_analysis_v2("002156")
 
 ### 示例2: 云天化 (600096) - 大周期反转
 
-```python
-result = quick_analysis_v2("600096", analysis_mode="deep")
+```bash
+python akshare_fetcher.py analyze "600096" --analysis-mode deep --pretty
 
 # 深度分析关键发现:
 # - 日线: 500根 (2年数据)
@@ -490,18 +471,12 @@ result = quick_analysis_v2("600096", analysis_mode="deep")
 
 ```bash
 # 标准分析 - 快速判断
-$ python akshare_fetcher.py "隆基"
-# 分析模式: 标准分析 | 日线:200根 周线:100根
-# 趋势: bearish
-# 阶段: Phase A - Potential Spring Zone
-# 建议: 观望等待止跌信号
+$ python akshare_fetcher.py analyze "隆基"
+# 输出 JSON：包含 trend / phase / key_levels / probabilities
 
 # 深度分析 - 长线布局
-$ python akshare_fetcher.py "隆基" "深度"
-# 分析模式: 深度分析 | 日线:500根 周线:200根
-# 大周期: 周线downtrend但位于26%底部区域
-# 结构: 2022-2024完整Markdown，当前Accumulation
-# 目标: ¥81.56 (+20.1%)
+$ python akshare_fetcher.py analyze "隆基" --analysis-mode deep --pretty
+# 输出 JSON：compact 模式（默认）
 ```
 
 ---
@@ -535,40 +510,22 @@ $ python akshare_fetcher.py "隆基" "深度"
 
 ### 自定义分析参数
 
-```python
-from akshare_fetcher import fetch_data_parallel, quick_analysis_v2
-
-# 自定义数据获取
-# fetch_data_parallel(symbol, daily_days=300, weekly_bars=150)
-
+```bash
 # 标准 vs 深度模式对比
-standard = quick_analysis_v2("600519", analysis_mode="standard")
-deep = quick_analysis_v2("600519", analysis_mode="deep")
+python akshare_fetcher.py analyze "600519" > /tmp/standard.json
+python akshare_fetcher.py analyze "600519" --analysis-mode deep > /tmp/deep.json
 
-print(f"Standard TR位置: {standard['key_levels']['tr_position_pct']}%")
-print(f"Deep TR位置: {deep['key_levels']['tr_position_pct']}%")
-print(f"Deep 回看天数: {deep['point_figure']['lookback_days']}")
+# 用 jq 对比关键字段
+jq '.key_levels.tr_position_pct, .point_figure.lookback_days' /tmp/standard.json
+jq '.key_levels.tr_position_pct, .point_figure.lookback_days' /tmp/deep.json
 ```
 
 ### 批量分析
 
-```python
-stocks = ["茅台", "宁德时代", "比亚迪"]
-results = []
-
-for stock in stocks:
-    code = resolve_stock_code(stock)['code']
-    result = quick_analysis_v2(code)
-    results.append({
-        'name': stock,
-        'trend': result['trend'],
-        'phase': result['phase'],
-        'tr_pos': result['key_levels']['tr_position_pct'],
-        'spring_prob': result['probabilities']['spring_next_5d']
-    })
-
-# 筛选最强股票
-strongest = max(results, key=lambda x: x['spring_prob'])
+```bash
+for stock in 茅台 宁德时代 比亚迪; do
+  python akshare_fetcher.py analyze "$stock" | jq -c '{symbol,trend,phase,tr_pos:.key_levels.tr_position_pct,spring_prob:.probabilities.spring_next_5d}'
+done
 ```
 
 ---

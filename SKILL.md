@@ -17,19 +17,22 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-```python
-from akshare_fetcher import quick_analysis, resolve_stock_code
+```bash
+# 股票代码解析（返回 JSON）
+python akshare_fetcher.py resolve "通富微电"
+python akshare_fetcher.py resolve "茅台"
+python akshare_fetcher.py resolve "002840"
+python akshare_fetcher.py resolve "SH600519"
 
-# 支持股票名称、简称、代码查询
-result = resolve_stock_code("通富微电")  # 返回: {'code': '002156', 'name': '通富微电', ...}
-result = resolve_stock_code("茅台")      # 返回: {'code': '600519', 'name': '贵州茅台', ...}
-result = resolve_stock_code("002840")    # 返回: {'code': '002840', 'name': '华统股份', ...}
+# 模糊匹配返回多个结果时需要用户确认（requires_clarification=true）
+python akshare_fetcher.py resolve "长电"
 
-# 模糊匹配返回多个结果时需要用户确认
-# 返回: {'matches': [('002156', '通富微电'), ('688123', '其他微电')], 'requires_clarification': True}
+# 执行分析（默认 compact JSON，避免输出截断）
+python akshare_fetcher.py analyze "002156"
+python akshare_fetcher.py analyze "600519" --analysis-mode deep
 
-# 执行分析
-analysis = quick_analysis("002156")
+# 如需完整原始结构（等同 quick_analysis_v2 返回），使用 --full
+python akshare_fetcher.py analyze "600519" --analysis-mode deep --full
 ```
 
 ### 股票代码查询
@@ -57,9 +60,9 @@ analysis = quick_analysis("002156")
 - **适用**: 长期投资、大周期结构识别
 - **AI 要求**: 必须进行多周期结构转换的深度解读
 
-```python
+```bash
 # 深度分析调用
-result = quick_analysis("600519", analysis_mode="deep")
+python akshare_fetcher.py analyze "600519" --analysis-mode deep
 ```
 
 ## Data Source
@@ -262,7 +265,7 @@ Distribution (5天)      [X]%      [高/中/低]概率派发
 • [风险点3]
 
 
-📋 数据新鲜度: 日线[N]根 ([日期]) │ 周线[N]根 ([日期]) │ [X]ms
+📋 数据范围:5 分钟线[N]根 (截止[日期:时间]) │ 日线[N]根 ([日期]) │ 周线[N]根 ([日期]) │ [X]ms
 ```
 
 ### 简化版格式 (说人话模式)

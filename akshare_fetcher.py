@@ -44,8 +44,8 @@ def _get_normalized_names():
         }
     return _normalized_name_cache
 
-import os
-from datetime import datetime, timedelta
+import json
+import argparse
 from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
@@ -59,8 +59,9 @@ warnings.filterwarnings('ignore')
 def normalize_code(code: str) -> str:
     """Normalize stock code to 6-digit format"""
     code = code.strip()
+    code_lower = code.lower()
     # Remove sh/sz prefix
-    if code.startswith(('sh', 'sz')):
+    if code_lower.startswith(('sh', 'sz')):
         code = code[2:]
     # Remove .SS/.SZ suffix
     if '.' in code:
@@ -96,6 +97,8 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
     5. Akshare API fallback (if no local match)
     """
     query = query.strip()
+    if not query:
+        return None, [], "查询不能为空，请输入股票名称或6位代码"
     STOCK_NAME_TO_CODE, STOCK_CODE_TO_NAME, STOCK_ALIASES = _import_stock_constants()
     
     # 1. Exact code match (normalized)
@@ -117,10 +120,19 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
     
     # 3. Alias match
     if query in STOCK_ALIASES:
-        full_name = STOCK_ALIASES[query]
-        if full_name in STOCK_NAME_TO_CODE:
-            code = STOCK_NAME_TO_CODE[full_name]
+        alias_target = STOCK_ALIASES[query]
+        # Backward compatible: alias may be either "str" or ["name1", "name2"].
+        candidate_names = [alias_target] if isinstance(alias_target, str) else list(alias_target)
+        alias_matches = [
+            (STOCK_NAME_TO_CODE[name], name)
+            for name in candidate_names
+            if name in STOCK_NAME_TO_CODE
+        ]
+        if len(alias_matches) == 1:
+            code, full_name = alias_matches[0]
             return (code, full_name), [], f"简称匹配: {query} -> {full_name}"
+        if len(alias_matches) > 1:
+            return None, alias_matches[:10], f"简称 '{query}' 匹配到多个股票，请确认"
     
     # 4. Fuzzy name match (contains query)
     # Use pre-computed normalized names for O(1) lookup performance
@@ -154,7 +166,7 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
                     if len(df) > 0:
                         # Code is valid, return it
                         return (test_code, None), [], f"远程代码验证有效: {test_code}"
-            except:
+            except Exception:
                 pass
             
             # Method 2: Search in stock list (if available)
@@ -175,7 +187,7 @@ def lookup_stock_code(query: str) -> Tuple[Optional[str], List[Tuple[str, str]],
                     if len(code_matches) > 0:
                         for _, row in code_matches.head(5).iterrows():
                             fuzzy_matches.append((str(row['代码']), str(row['名称'])))
-            except:
+            except Exception:
                 pass
                 
         except Exception as e:
@@ -212,6 +224,16 @@ def resolve_stock_code(query: str) -> Dict:
     - message: user-friendly message
     - requires_clarification: bool
     """
+    if not query or not query.strip():
+        return {
+            'success': False,
+            'code': None,
+            'name': None,
+            'matches': [],
+            'message': "查询不能为空，请输入股票名称或6位代码。",
+            'requires_clarification': False
+        }
+
     exact, fuzzy, msg = lookup_stock_code(query)
     
     result = {
@@ -247,8 +269,9 @@ def resolve_stock_code(query: str) -> Dict:
 def _to_sina_symbol(symbol: str) -> str:
     """Convert to Sina format"""
     symbol = symbol.strip()
-    if symbol.startswith(('sh', 'sz')):
-        return symbol
+    symbol_lower = symbol.lower()
+    if symbol_lower.startswith(('sh', 'sz')):
+        return symbol_lower
     if symbol.startswith(('6', '5', '688')):
         return f"sh{symbol}"
     return f"sz{symbol}"
@@ -389,8 +412,12 @@ def analyze_last_day_minute(minute5_df, daily_df, pd=None):
     day_close = float(last_bar['close'])
     
     today_df['typical'] = (today_df['high'] + today_df['low'] + today_df['close']) / 3
-    today_df['vwap'] = (today_df['typical'] * today_df['volume']).cumsum() / today_df['volume'].cumsum()
-    vwap = float(today_df['vwap'].iloc[-1])
+    cum_vol = today_df['volume'].cumsum()
+    if float(cum_vol.iloc[-1]) <= 0:
+        vwap = float(day_close)
+    else:
+        today_df['vwap'] = (today_df['typical'] * today_df['volume']).cumsum() / cum_vol
+        vwap = float(today_df['vwap'].iloc[-1])
     
     total_vol = int(today_df['volume'].sum())
     first_hour_vol = int(today_df.head(12)['volume'].sum()) if len(today_df) >= 12 else total_vol
@@ -852,7 +879,6 @@ def fetch_data_parallel(symbol: str, daily_days: int = 200, weekly_bars: int = 1
             df = fetch_minute_sina(symbol, "5", ak, pd)
             return {'minute5': df, 'minute_success': True}
         except Exception as e:
-            print(f"Minute fetch error: {e}")
             return {'minute5': pd.DataFrame(), 'minute_success': False}
     
     executor = ThreadPoolExecutor(max_workers=2)
@@ -875,7 +901,7 @@ def fetch_data_parallel(symbol: str, daily_days: int = 200, weekly_bars: int = 1
         try:
             weekly = resample_weekly_fast(results['daily_full'], pd).tail(weekly_bars).reset_index(drop=True)
             results['weekly'] = weekly
-        except:
+        except Exception:
             results['weekly'] = pd.DataFrame()
     
     # Add analysis mode metadata
@@ -1039,153 +1065,129 @@ def quick_analysis_v2(symbol: str, analysis_mode: str = 'standard') -> Dict:
     }
 
 
-# Legacy compatibility
-quick_analysis = quick_analysis_v2
-fetch_wyckoff_data = fetch_data_parallel
+def _print_json(payload: Dict, pretty: bool = False) -> None:
+    """Emit JSON payload for CLI consumers."""
+    def _json_default(obj):
+        # Handle numpy scalars / arrays without importing numpy globally.
+        if hasattr(obj, 'item'):
+            try:
+                return obj.item()
+            except Exception:
+                pass
+        if hasattr(obj, 'tolist'):
+            try:
+                return obj.tolist()
+            except Exception:
+                pass
+        if isinstance(obj, (set, tuple)):
+            return list(obj)
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    if pretty:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default))
+    else:
+        print(json.dumps(payload, ensure_ascii=False, separators=(',', ':'), default=_json_default))
+
+
+def _compact_analysis_result(result: Dict) -> Dict:
+    """
+    Build a compact analysis payload for CLI consumption.
+    Keeps decision-critical fields while dropping heavy arrays
+    that often trigger terminal output truncation.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    compact = dict(result)
+    pf = compact.get('point_figure')
+    if isinstance(pf, dict):
+        pf_compact = dict(pf)
+        cols = pf_compact.pop('columns', None)
+        if isinstance(cols, list):
+            pf_compact['columns_count'] = len(cols)
+            if cols and isinstance(cols[-1], dict):
+                last_col = cols[-1]
+                pf_compact['last_column'] = {
+                    'type': last_col.get('type'),
+                    'boxes': last_col.get('boxes'),
+                    'start_price': round(float(last_col.get('start_price', 0)), 2),
+                    'end_price': round(float(last_col.get('end_price', 0)), 2),
+                }
+        compact['point_figure'] = pf_compact
+
+    compact['output_mode'] = 'compact'
+    compact['output_note'] = 'Use --full to include point_figure.columns'
+    return compact
+
+
+def _build_cli_parser():
+    parser = argparse.ArgumentParser(
+        description="Wyckoff VPA CLI for Chinese A-shares (JSON output)"
+    )
+    subparsers = parser.add_subparsers(dest='command')
+
+    resolve_parser = subparsers.add_parser(
+        'resolve', help='Resolve stock code/name/alias and return JSON'
+    )
+    resolve_parser.add_argument('query', help='Stock query (name/alias/code)')
+    resolve_parser.add_argument('--pretty', action='store_true', help='Pretty-print JSON')
+
+    analyze_parser = subparsers.add_parser(
+        'analyze', help='Run Wyckoff analysis and return JSON result'
+    )
+    analyze_parser.add_argument('query', help='Stock query (name/alias/code)')
+    analyze_parser.add_argument(
+        '--analysis-mode', '-m',
+        choices=['standard', 'deep'],
+        default='standard',
+        help='Analysis mode: standard(200d/100w) or deep(500d/200w)'
+    )
+    analyze_parser.add_argument(
+        '--full',
+        action='store_true',
+        help='Return full quick_analysis_v2 payload (larger output)'
+    )
+    analyze_parser.add_argument('--pretty', action='store_true', help='Pretty-print JSON')
+
+    return parser
+
+
+def _run_cli(args) -> int:
+    if args.command == 'resolve':
+        result = resolve_stock_code(args.query)
+        _print_json(result, pretty=args.pretty)
+        return 0 if result.get('success') else 1
+
+    if args.command == 'analyze':
+        resolved = resolve_stock_code(args.query)
+        if not resolved.get('success'):
+            # Keep resolve response shape for unresolved/ambiguous input.
+            _print_json(resolved, pretty=args.pretty)
+            return 1
+
+        symbol = resolved['code']
+        try:
+            result = quick_analysis_v2(symbol, analysis_mode=args.analysis_mode)
+            payload = result if args.full else _compact_analysis_result(result)
+            _print_json(payload, pretty=args.pretty)
+            return 0
+        except Exception as e:
+            error_payload = {
+                'success': False,
+                'code': symbol,
+                'name': resolved.get('name'),
+                'error': str(e),
+            }
+            _print_json(error_payload, pretty=args.pretty)
+            return 1
+
+    return 1
 
 
 if __name__ == "__main__":
-    import sys
-    import time
-    
-    # Parse command line arguments
-    # Support: python akshare_fetcher.py "茅台" [deep]
-    analysis_mode = 'standard'
-    query_args = []
-    
-    for arg in sys.argv[1:]:
-        if arg.lower() in ['deep', 'depth', 'long', 'longterm', '重度', '深度', '长线']:
-            analysis_mode = 'deep'
-        else:
-            query_args.append(arg)
-    
-    if query_args:
-        query = ' '.join(query_args)
-    else:
-        query = "601869"
-    
-    print(f"\n{'='*60}")
-    print(f"Wyckoff VPA Analysis Tool")
-    print(f"Query: {query}")
-    print(f"Mode: {analysis_mode}")
-    print('='*60)
-    
-    # Step 1: Resolve stock code
-    print("\n[Step 1] 查询股票代码...")
-    resolved = resolve_stock_code(query)
-    
-    if not resolved['success'] and resolved['requires_clarification']:
-        print(f"⚠️  {resolved['message']}")
-        print("\n候选股票:")
-        for i, (code, name) in enumerate(resolved['matches'][:10], 1):
-            print(f"  {i}. {name} ({code})")
-        if len(resolved['matches']) > 10:
-            print(f"  ... 还有 {len(resolved['matches']) - 10} 个匹配")
-        print("\n请使用完整的股票名称或代码重新查询")
-        sys.exit(1)
-    elif not resolved['success']:
-        print(f"❌ {resolved['message']}")
-        sys.exit(1)
-    
-    symbol = resolved['code']
-    name = resolved['name'] or symbol
-    print(f"✅ 已定位: {name} ({symbol})")
-    
-    # Step 2: Run analysis
-    print(f"\n[Step 2] 执行威科夫分析 ({'深度模式' if analysis_mode == 'deep' else '标准模式'})...")
-    start = time.time()
-    
-    try:
-        result = quick_analysis_v2(symbol, analysis_mode=analysis_mode)
-        elapsed = time.time() - start
-        
-        print(f"✅ 分析完成 ({elapsed:.3f}s)")
-        
-        # Print summary
-        kl = result['key_levels']
-        dq = result['data_quality']
-        mode_display = "深度分析" if result['analysis_mode'] == 'deep' else "标准分析"
-        print(f"\n{'='*60}")
-        print(f"威科夫分析报告 | {name} ({symbol}) | ¥{kl['current']}")
-        print(f"分析模式: {mode_display} | 日线:{dq['daily_bars']}根 周线:{dq['weekly_bars']}根")
-        print(f"{'='*60}")
-        
-        print(f"\n【关键价位】")
-        print(f"  当前价格: ¥{kl['current']} ({kl['change_pct']}%)")
-        print(f"  TR区间: ¥{kl['tr_low_20d']} ~ ¥{kl['tr_high_20d']}")
-        print(f"  TR位置: {kl['tr_position_pct']}%")
-        print(f"  MA5/MA10/MA20: ¥{kl['ma5']} / ¥{kl['ma10']} / ¥{kl['ma20']}")
-        
-        print(f"\n【趋势与阶段】")
-        print(f"  趋势: {result['trend']}")
-        print(f"  阶段: {result['phase']}")
-        
-        print(f"\n【成交量分布】")
-        vp = result['volume_profile']
-        print(f"  POC: ¥{vp['poc']}")
-        print(f"  VA: ¥{vp['value_area_low']} ~ ¥{vp['value_area_high']}")
-        
-        print(f"\n【点数图测算】")
-        pf = result['point_figure']
-        print(f"  Box Size: ¥{pf['box_size']}")
-        print(f"  当前: {pf['current_trend']}列{pf['current_column_boxes']}格")
-        if pf['targets']:
-            t = pf['targets']
-            current = kl['current']
-            if 'bullish_neutral' in t:
-                n = t['bullish_neutral']
-                a = t['bullish_aggressive']
-                print(f"  看涨目标: 中性¥{n} (+{(n/current-1)*100:.1f}%) / 激进¥{a} (+{(a/current-1)*100:.1f}%)")
-            if 'bearish_neutral' in t:
-                n = t['bearish_neutral']
-                a = t['bearish_aggressive']
-                print(f"  看跌目标: 中性¥{n} ({(n/current-1)*100:.1f}%) / 激进¥{a} ({(a/current-1)*100:.1f}%)")
-        
-        print(f"\n【概率评估】")
-        for k, v in result['probabilities'].items():
-            print(f"  {k}: {v}%")
-        
-        print(f"\n【数据质量详情】")
-        print(f"  日线: {dq['daily_bars']} 根 ({dq['daily_range']})")
-        print(f"  周线: {dq['weekly_bars']} 根 ({dq['weekly_range']})")
-        print(f"  5分钟: {dq['minute5_bars']} 根 ({dq['minute5_range']})")
-        print(f"  执行时间: {result['execution_time_ms']:.0f}ms")
-        
-        print(f"\n{'='*60}")
-            
-    except ValueError as e:
-        error_msg = str(e)
-        if "No data for" in error_msg:
-            print(f"❌ 无法获取股票数据: {symbol}")
-            print()
-            print("可能原因:")
-            print("  1. 股票代码不存在或已退市")
-            print("  2. 股票已更名（如 *ST、退市等）")
-            print("  3. 该股票可能已转移到其他板块（如北交所）")
-            print("  4. 数据源暂时不可用")
-            print()
-            print("建议:")
-            print("  - 请确认股票代码正确")
-            print("  - 尝试使用股票完整名称查询")
-            print("  - 检查该股票是否已退市或更名")
-        else:
-            print(f"❌ 数据错误: {error_msg}")
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(1)
-    except Exception as e:
-        import traceback
-        error_msg = str(e)
-        if "mini_racer" in error_msg.lower() or "libmini_racer" in error_msg.lower():
-            print(f"❌ JavaScript 执行引擎错误 (这是 akshare 库的内部问题)")
-            print()
-            print("解决方法:")
-            print("  1. 请重新运行命令（间歇性问题）")
-            print("  2. 更新 akshare: pip install -U akshare")
-            print("  3. 检查网络连接稳定性")
-        else:
-            print(f"❌ 分析失败: {e}")
-            traceback.print_exc()
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(1)
+    parser = _build_cli_parser()
+    cli_args = parser.parse_args()
+    if not cli_args.command:
+        parser.print_help()
+        raise SystemExit(1)
+    raise SystemExit(_run_cli(cli_args))
