@@ -606,7 +606,7 @@ def calculate_probabilities(signals, trend, tr_pos, minute):
 
 def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     """
-    Calculate Wyckoff Point & Figure chart
+    Calculate Wyckoff Point & Figure chart (optimized with numpy)
     Box size = LTP * box_pct (default 1%)
     Reversal = reversal_boxes boxes (default 3)
     Returns P&F columns and price targets based on horizontal count
@@ -614,16 +614,24 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     if len(daily_df) < 50:
         return {'error': 'Insufficient data'}
     
-    pd = _import_pandas()
     np = _import_numpy()
+    pd = _import_pandas()
     
-    # Use last 200 days
-    df = daily_df.tail(200).copy()
-    df['close'] = pd.to_numeric(df['close'], errors='coerce')
-    df['high'] = pd.to_numeric(df['high'], errors='coerce')
-    df['low'] = pd.to_numeric(df['low'], errors='coerce')
+    # Use last 200 days - convert to numpy arrays for speed
+    df = daily_df.tail(200)
+    highs = pd.to_numeric(df['high'], errors='coerce').values
+    lows = pd.to_numeric(df['low'], errors='coerce').values
+    closes = pd.to_numeric(df['close'], errors='coerce').values
     
-    ltp = float(df['close'].iloc[-1])
+    # Remove any NaN values
+    valid_mask = ~(np.isnan(highs) | np.isnan(lows))
+    highs = highs[valid_mask]
+    lows = lows[valid_mask]
+    
+    if len(highs) < 50:
+        return {'error': 'Insufficient data after cleaning'}
+    
+    ltp = float(closes[-1])
     box_size = ltp * box_pct
     
     # Round box size to reasonable precision
@@ -636,22 +644,26 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     
     reversal_amount = box_size * reversal_boxes
     
-    # Build P&F columns
-    columns = []  # Each column: {'type': 'X'/'O', 'boxes': count, 'price_levels': [(low, high)]}
+    # Build P&F columns using optimized numpy arrays
+    columns = []
     current_col = None
     
-    for idx, row in df.iterrows():
-        high = float(row['high'])
-        low = float(row['low'])
+    # Local variables for speed (avoid dict lookups in loop)
+    box = box_size
+    rev_amt = reversal_amount
+    
+    for i in range(len(highs)):
+        high = float(highs[i])
+        low = float(lows[i])
         
         if current_col is None:
-            # Initialize first column based on first day direction
-            if high >= low + box_size:
-                boxes = int((high - low) / box_size) + 1
+            # Initialize first column
+            if high >= low + box:
+                boxes = int((high - low) / box) + 1
                 current_col = {
                     'type': 'X',
                     'start_price': low,
-                    'end_price': low + boxes * box_size,
+                    'end_price': low + boxes * box,
                     'boxes': boxes,
                     'high': high,
                     'low': low
@@ -660,45 +672,47 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
                 current_col = {
                     'type': 'O',
                     'start_price': high,
-                    'end_price': high - box_size,
+                    'end_price': high - box,
                     'boxes': 1,
                     'high': high,
                     'low': low
                 }
         elif current_col['type'] == 'X':
             # Check for continuation
-            potential_boxes = int((high - current_col['end_price']) / box_size)
-            if potential_boxes > 0:
-                current_col['boxes'] += potential_boxes
-                current_col['end_price'] += potential_boxes * box_size
-                current_col['high'] = max(current_col['high'], high)
+            potential = int((high - current_col['end_price']) / box)
+            if potential > 0:
+                current_col['boxes'] += potential
+                current_col['end_price'] += potential * box
+                if high > current_col['high']:
+                    current_col['high'] = high
             # Check for reversal
-            elif current_col['end_price'] - low >= reversal_amount:
+            elif current_col['end_price'] - low >= rev_amt:
                 columns.append(current_col)
-                boxes = int((current_col['end_price'] - low) / box_size)
+                boxes = int((current_col['end_price'] - low) / box)
                 current_col = {
                     'type': 'O',
                     'start_price': current_col['end_price'],
-                    'end_price': current_col['end_price'] - boxes * box_size,
+                    'end_price': current_col['end_price'] - boxes * box,
                     'boxes': boxes,
                     'high': high,
                     'low': low
                 }
-        else:  # current_col['type'] == 'O'
+        else:  # 'O'
             # Check for continuation
-            potential_boxes = int((current_col['end_price'] - low) / box_size)
-            if potential_boxes > 0:
-                current_col['boxes'] += potential_boxes
-                current_col['end_price'] -= potential_boxes * box_size
-                current_col['low'] = min(current_col['low'], low)
+            potential = int((current_col['end_price'] - low) / box)
+            if potential > 0:
+                current_col['boxes'] += potential
+                current_col['end_price'] -= potential * box
+                if low < current_col['low']:
+                    current_col['low'] = low
             # Check for reversal
-            elif high - current_col['end_price'] >= reversal_amount:
+            elif high - current_col['end_price'] >= rev_amt:
                 columns.append(current_col)
-                boxes = int((high - current_col['end_price']) / box_size)
+                boxes = int((high - current_col['end_price']) / box)
                 current_col = {
                     'type': 'X',
                     'start_price': current_col['end_price'],
-                    'end_price': current_col['end_price'] + boxes * box_size,
+                    'end_price': current_col['end_price'] + boxes * box,
                     'boxes': boxes,
                     'high': high,
                     'low': low
@@ -714,33 +728,43 @@ def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
     targets = {}
     
     def find_congestion_area(columns, start_idx, min_cols=3, max_cols=10):
-        """Find a congestion area starting from given index"""
+        """Find a congestion area starting from given index (optimized)"""
         if start_idx >= len(columns):
             return None
         
-        # Get price range for columns
-        prices = []
-        for col in columns[start_idx:min(start_idx + max_cols, len(columns))]:
-            col_low = min(col['start_price'], col.get('end_price', col['start_price']))
-            col_high = max(col['start_price'], col.get('end_price', col['start_price']))
-            prices.append((col_low, col_high))
+        np = _import_numpy()
         
-        if len(prices) < min_cols:
+        # Extract price ranges using list comprehension (faster than loop)
+        end_idx = min(start_idx + max_cols, len(columns))
+        prices = [
+            (
+                min(col['start_price'], col.get('end_price', col['start_price'])),
+                max(col['start_price'], col.get('end_price', col['start_price']))
+            )
+            for col in columns[start_idx:end_idx]
+        ]
+        
+        n = len(prices)
+        if n < min_cols:
             return None
         
-        # Find overlapping range (congestion)
-        for width in range(min_cols, min(len(prices) + 1, max_cols + 1)):
-            for start in range(len(prices) - width + 1):
-                # Check if these columns form a congestion
-                overlap_low = max([p[0] for p in prices[start:start+width]])
-                overlap_high = min([p[1] for p in prices[start:start+width]])
+        # Convert to numpy arrays for vectorized operations
+        lows = np.array([p[0] for p in prices])
+        highs = np.array([p[1] for p in prices])
+        
+        # Find overlapping range using vectorized operations
+        for width in range(min_cols, min(n + 1, max_cols + 1)):
+            for start in range(n - width + 1):
+                # Vectorized max/min over slice
+                overlap_low = np.max(lows[start:start+width])
+                overlap_high = np.min(highs[start:start+width])
                 
-                if overlap_high > overlap_low:  # There's overlap
+                if overlap_high > overlap_low:
                     return {
                         'start_col': start_idx + start,
                         'width': width,
-                        'bottom': overlap_low,
-                        'top': overlap_high,
+                        'bottom': float(overlap_low),
+                        'top': float(overlap_high),
                         'height_boxes': int((overlap_high - overlap_low) / box_size) + 1
                     }
         
