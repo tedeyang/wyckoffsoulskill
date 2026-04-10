@@ -45,11 +45,12 @@ def _get_normalized_names():
     return _normalized_name_cache
 
 import json
-import argparse
 from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 warnings.filterwarnings('ignore')
+
+from wyckoff_engine_v2 import build_wyckoff_analysis
 
 
 # ============================================================================
@@ -306,7 +307,21 @@ def fetch_minute_sina(symbol: str, period: str = "5", ak=None, pd=None):
     if pd is None:
         pd = _import_pandas()
     sina_symbol = _to_sina_symbol(symbol)
-    df = ak.stock_zh_a_minute(symbol=sina_symbol, period=period)
+    last_error = None
+    df = None
+    for _ in range(3):
+        try:
+            df = ak.stock_zh_a_minute(symbol=sina_symbol, period=period)
+            if len(df) > 0:
+                break
+        except Exception as exc:
+            last_error = exc
+            import time
+            time.sleep(0.35)
+    if df is None:
+        if last_error is not None:
+            raise last_error
+        raise ValueError("Minute fetch returned no dataframe")
     
     if len(df) == 0:
         raise ValueError("No minute data")
@@ -566,49 +581,6 @@ def calculate_wyckoff_signals(daily_df, weekly_df):
         }
     
     return signals
-
-
-def calculate_probabilities(signals, trend, tr_pos, minute):
-    """Calculate event probabilities"""
-    probs = {}
-    
-    spring_base = 0.1
-    if tr_pos < 35:
-        spring_base += 0.2
-    if signals.get('daily', {}).get('spring_candidate'):
-        spring_base += 0.25
-    if trend in ['bearish', 'strong_bearish']:
-        spring_base += 0.1
-    if minute.get('dominant') == 'demand':
-        spring_base += 0.15
-    probs['spring_next_5d'] = min(0.85, spring_base)
-    
-    breakout_up = 0.15
-    if 55 < tr_pos < 70:
-        breakout_up += 0.2
-    if signals.get('multi_timeframe', {}).get('alignment') in ['strong_accumulation', 'weak_accumulation']:
-        breakout_up += 0.2
-    if minute.get('day_type') == 'demand_dominant':
-        breakout_up += 0.15
-    probs['breakout_up_next_10d'] = min(0.75, breakout_up)
-    
-    distrib = 0.1
-    if tr_pos > 70:
-        distrib += 0.25
-    if signals.get('daily', {}).get('upthrust_candidate'):
-        distrib += 0.25
-    if trend in ['bullish', 'strong_bullish'] and tr_pos > 60:
-        distrib += 0.15
-    probs['distribution_next_5d'] = min(0.8, distrib)
-    
-    if trend in ['strong_bullish', 'bullish']:
-        probs['trend_continuation'] = 0.6 if tr_pos < 60 else 0.4
-    elif trend in ['strong_bearish', 'bearish']:
-        probs['trend_continuation'] = 0.6 if tr_pos > 40 else 0.4
-    else:
-        probs['trend_continuation'] = 0.3
-    
-    return {k: round(v * 100, 1) for k, v in probs.items()}
 
 
 def calculate_point_figure(daily_df, box_pct=0.01, reversal_boxes=3):
@@ -1014,30 +986,6 @@ def quick_analysis_v2(symbol: str, analysis_mode: str = 'standard') -> Dict:
         'ma20': round(float(daily['ma20'].iloc[-1]), 2),
     }
     
-    # Trend
-    if current > daily['ma5'].iloc[-1] > daily['ma10'].iloc[-1] > daily['ma20'].iloc[-1]:
-        trend = 'strong_bullish'
-    elif current > daily['ma20'].iloc[-1]:
-        trend = 'bullish'
-    elif current < daily['ma5'].iloc[-1] < daily['ma10'].iloc[-1] < daily['ma20'].iloc[-1]:
-        trend = 'strong_bearish'
-    elif current < daily['ma20'].iloc[-1]:
-        trend = 'bearish'
-    else:
-        trend = 'neutral'
-    
-    # Phase
-    if tr_position < 30:
-        phase = 'Phase A - Potential Spring Zone'
-    elif tr_position < 45:
-        phase = 'Phase B - Accumulation Continuation'
-    elif tr_position < 55:
-        phase = 'Phase B/C - Transition Zone'
-    elif tr_position < 70:
-        phase = 'Phase C - Test of Supply'
-    else:
-        phase = 'Phase D - Distribution Risk'
-    
     # Detailed data quality with date ranges
     daily_start = daily['date'].iloc[0] if 'date' in daily.columns and len(daily) > 0 else None
     daily_end = daily['date'].iloc[-1] if 'date' in daily.columns and len(daily) > 0 else None
@@ -1071,26 +1019,48 @@ def quick_analysis_v2(symbol: str, analysis_mode: str = 'standard') -> Dict:
             errors[key] = data[key]
     if errors:
         data_quality['errors'] = errors
-    
-    probabilities = calculate_probabilities(wyckoff_signals, trend, tr_position, minute_analysis)
-    
-    # Calculate Point & Figure chart (box = 1% of LTP, 3-box reversal, 200 days lookback)
-    pf_chart = calculate_point_figure(data.get('daily_full', daily), box_pct=0.01, reversal_boxes=3)
-    
-    return {
-        'symbol': symbol,
-        'analysis_mode': analysis_mode,
-        'key_levels': key_levels,
-        'trend': trend,
-        'phase': phase,
-        'volume_profile': vol_profile,
-        'wyckoff_signals': wyckoff_signals,
-        'minute_analysis': minute_analysis,
-        'probabilities': probabilities,
-        'point_figure': pf_chart,
-        'data_quality': data_quality,
-        'execution_time_ms': round((time.time() - start_time) * 1000, 1)
-    }
+
+    # Calculate Point & Figure chart using live session bar when minute data is newer than daily close.
+    pf_source = data.get('daily_full', daily).copy()
+    if (
+        isinstance(minute_analysis, dict)
+        and not minute_analysis.get('error')
+        and len(pf_source) > 0
+        and 'date' in pf_source.columns
+        and minute_analysis.get('date')
+    ):
+        session_date = str(minute_analysis.get('date'))[:10]
+        last_daily_date = str(pf_source['date'].iloc[-1])[:10]
+        if session_date >= last_daily_date:
+            live_row = {
+                'date': session_date,
+                'open': float(minute_analysis.get('day_open') or prev_close),
+                'high': float(minute_analysis.get('day_high') or current),
+                'low': float(minute_analysis.get('day_low') or current),
+                'close': float(minute_analysis.get('day_close') or current),
+                'volume': float(minute_analysis.get('total_volume') or 0),
+            }
+            live_df = pd.DataFrame([live_row])
+            if session_date == last_daily_date:
+                pf_source = pd.concat([pf_source.iloc[:-1], live_df], ignore_index=True)
+            else:
+                pf_source = pd.concat([pf_source, live_df], ignore_index=True)
+
+    pf_chart = calculate_point_figure(pf_source, box_pct=0.01, reversal_boxes=3)
+
+    return build_wyckoff_analysis(
+        symbol=symbol,
+        analysis_mode=analysis_mode,
+        daily_bars=daily,
+        weekly_bars=weekly,
+        minute_bars=minute5,
+        key_levels=key_levels,
+        volume_profile=vol_profile,
+        minute_analysis=minute_analysis,
+        point_figure=pf_chart,
+        data_quality=data_quality,
+        execution_time_ms=round((time.time() - start_time) * 1000, 1),
+    )
 
 
 def _print_json(payload: Dict, pretty: bool = False) -> None:
@@ -1127,95 +1097,26 @@ def _compact_analysis_result(result: Dict) -> Dict:
         return result
 
     compact = dict(result)
-    pf = compact.get('point_figure')
-    if isinstance(pf, dict):
-        pf_compact = dict(pf)
-        cols = pf_compact.pop('columns', None)
-        if isinstance(cols, list):
-            pf_compact['columns_count'] = len(cols)
-            if cols and isinstance(cols[-1], dict):
-                last_col = cols[-1]
-                pf_compact['last_column'] = {
-                    'type': last_col.get('type'),
-                    'boxes': last_col.get('boxes'),
-                    'start_price': round(float(last_col.get('start_price', 0)), 2),
-                    'end_price': round(float(last_col.get('end_price', 0)), 2),
-                }
-        compact['point_figure'] = pf_compact
+    events = compact.get('event_candidates')
+    if isinstance(events, list):
+        shortlisted = [event for event in events if isinstance(event, dict) and event.get('candidate')]
+        if not shortlisted:
+            shortlisted = sorted(
+                [event for event in events if isinstance(event, dict)],
+                key=lambda event: float(event.get('score', 0) or 0),
+                reverse=True,
+            )[:8]
+        compact['event_candidates'] = shortlisted[:12]
+
+    swings = compact.get('swing_comparisons')
+    if isinstance(swings, list):
+        compact['swing_comparisons'] = swings[-8:]
 
     compact['output_mode'] = 'compact'
-    compact['output_note'] = 'Use --full to include point_figure.columns'
+    compact['output_note'] = '使用 --full 可返回完整证据包'
     return compact
 
-
-def _build_cli_parser():
-    parser = argparse.ArgumentParser(
-        description="Wyckoff VPA CLI for Chinese A-shares (JSON output)"
-    )
-    subparsers = parser.add_subparsers(dest='command')
-
-    resolve_parser = subparsers.add_parser(
-        'resolve', help='Resolve stock code/name/alias and return JSON'
-    )
-    resolve_parser.add_argument('query', help='Stock query (name/alias/code)')
-    resolve_parser.add_argument('--pretty', action='store_true', help='Pretty-print JSON')
-
-    analyze_parser = subparsers.add_parser(
-        'analyze', help='Run Wyckoff analysis and return JSON result'
-    )
-    analyze_parser.add_argument('query', help='Stock query (name/alias/code)')
-    analyze_parser.add_argument(
-        '--analysis-mode', '-m',
-        choices=['standard', 'deep'],
-        default='standard',
-        help='Analysis mode: standard(200d/100w) or deep(500d/200w)'
-    )
-    analyze_parser.add_argument(
-        '--full',
-        action='store_true',
-        help='Return full quick_analysis_v2 payload (larger output)'
-    )
-    analyze_parser.add_argument('--pretty', action='store_true', help='Pretty-print JSON')
-
-    return parser
-
-
-def _run_cli(args) -> int:
-    if args.command == 'resolve':
-        result = resolve_stock_code(args.query)
-        _print_json(result, pretty=args.pretty)
-        return 0 if result.get('success') else 1
-
-    if args.command == 'analyze':
-        resolved = resolve_stock_code(args.query)
-        if not resolved.get('success'):
-            # Keep resolve response shape for unresolved/ambiguous input.
-            _print_json(resolved, pretty=args.pretty)
-            return 1
-
-        symbol = resolved['code']
-        try:
-            result = quick_analysis_v2(symbol, analysis_mode=args.analysis_mode)
-            payload = result if args.full else _compact_analysis_result(result)
-            _print_json(payload, pretty=args.pretty)
-            return 0
-        except Exception as e:
-            error_payload = {
-                'success': False,
-                'code': symbol,
-                'name': resolved.get('name'),
-                'error': str(e),
-            }
-            _print_json(error_payload, pretty=args.pretty)
-            return 1
-
-    return 1
-
-
 if __name__ == "__main__":
-    parser = _build_cli_parser()
-    cli_args = parser.parse_args()
-    if not cli_args.command:
-        parser.print_help()
-        raise SystemExit(1)
-    raise SystemExit(_run_cli(cli_args))
+    from vpa import main
+
+    raise SystemExit(main())
