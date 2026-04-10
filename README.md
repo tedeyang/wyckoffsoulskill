@@ -1,4 +1,4 @@
-# Wyckoff VPA Skill v1.0.1
+# Wyckoff VPA Skill v1.0.2
 
 威科夫量价分析 (Wyckoff Volume-Price Analysis) Skill for Chinese A-shares.
 
@@ -37,7 +37,7 @@ AI: [标准模式分析，200日/100周线]
 **AI 输出:**
 ```
 {
-  "schema_version": "1.0.1",
+  "schema_version": "1.0.2",
   "key_levels": {
     "current": 67.89,
     "tr_position_pct": 18.4
@@ -73,7 +73,7 @@ AI: [标准模式分析，200日/100周线]
 **AI 输出:**
 ```
 {
-  "schema_version": "1.0.1",
+  "schema_version": "1.0.2",
   "structural_context": {
     "weekly_context": {
       "current_position_pct": 14.96
@@ -218,16 +218,57 @@ Phase E: 进入新趋势 (Markup/Markdown)
 
 ## 📦 Installation
 
-### Using requirements.txt (Recommended)
+### Cross-Agent Package (No `git clone`)
+
+```bash
+# 1. Download and unzip the release package
+unzip wyckoff-vpa-1.0.2.zip
+cd wyckoff-vpa
+
+# 2. Install the shared runtime + Codex adapter
+python -m installer.install install --target codex
+```
+
+默认会把共享 runtime 安装到 `~/.wyckoff-vpa`，并把 Codex adapter 写到 `~/.codex/skills/wyckoff-vpa`。
+
+可选目标：
+
+```bash
+python -m installer.install install --target claudecode
+python -m installer.install install --target all --adapters-root ./adapters-out
+```
+
+- `codex`: 自动写入 `~/.codex/skills/wyckoff-vpa`
+- `claudecode`: 自动写入 `~/.claude/skills/wyckoff-vpa`
+- `kimi` / `openclaw`: 导出 `PROMPT.md` 到 `--adapters-root`，再由用户导入到对应平台
+
+如果你只想导出安装包内容、不创建 `.venv`：
+
+```bash
+python -m installer.install install --target all --adapters-root ./adapters-out --skip-venv --skip-deps
+```
+
+### Runtime-Only Setup
+
+如果你只是本地运行 CLI，而不是安装到 agent：
 
 ```bash
 pip install -r requirements.txt
+python vpa.py resolve "中国中免"
 ```
 
-### Manual Installation
+### Maintainer: Build Release Asset
+
+发布 zip 安装包：
 
 ```bash
-pip install akshare>=1.10.0 pandas>=1.5.0 numpy>=1.21.0
+python -m installer.build_release --output-dir dist
+```
+
+会生成：
+
+```text
+dist/wyckoff-vpa-1.0.2.zip
 ```
 
 ---

@@ -1757,7 +1757,7 @@ def build_wyckoff_analysis(
     package = WyckoffEvidencePackage(
         symbol=symbol,
         analysis_mode=analysis_mode,
-        schema_version="1.0.1",
+        schema_version="1.0.2",
         key_levels=effective_key_levels,
         raw_market_facts=raw_market_facts,
         structural_context=structural_context,
