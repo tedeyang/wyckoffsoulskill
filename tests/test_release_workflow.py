@@ -13,7 +13,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", text)
         self.assertIn("tags:", text)
         self.assertIn("- 'v*'", text)
-        self.assertIn("python -m unittest tests.test_installer tests.test_wyckoff_engine_v2 -v", text)
+        self.assertIn("python -m unittest tests.test_installer tests.test_release_workflow tests.test_vpa_cli tests.test_wyckoff_engine_v2 -v", text)
         self.assertIn("python -m installer.build_release --output-dir dist", text)
         self.assertIn("actions/upload-artifact", text)
         self.assertIn("softprops/action-gh-release", text)

@@ -62,6 +62,39 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("name: wyckoff-vpa", codex_text)
             self.assertIn(str(runtime_root / "bin" / "wyckoff-vpa"), kimi_text)
             self.assertNotIn("python vpa.py", codex_text)
+            self.assertNotIn(' resolve "<query>"', codex_text)
+            self.assertIn("--deep", codex_text)
+            self.assertIn("github.com/tedeyang/wyckoffsoulskill", codex_text)
+            self.assertIn("uninstall", codex_text)
+
+    def test_uninstall_package_removes_runtime_and_adapters(self):
+        from installer.install import install_package, uninstall_package
+
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            runtime_root = workspace / "runtime"
+            adapters_root = workspace / "adapters"
+
+            install_package(
+                source_root=repo_root,
+                runtime_root=runtime_root,
+                targets=["codex", "kimi"],
+                adapters_root=adapters_root,
+                create_venv=False,
+                install_deps=False,
+            )
+
+            removed = uninstall_package(
+                runtime_root=runtime_root,
+                targets=["codex", "kimi"],
+                adapters_root=adapters_root,
+            )
+
+            self.assertFalse(runtime_root.exists())
+            self.assertFalse((adapters_root / "codex").exists())
+            self.assertFalse((adapters_root / "kimi").exists())
+            self.assertIn(runtime_root, removed["paths"])
 
     def test_build_release_archive_contains_installer_and_runtime_sources(self):
         from installer.build_release import build_release_archive

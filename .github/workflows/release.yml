@@ -23,7 +23,7 @@ jobs:
           python-version: '3.11'
 
       - name: Run tests
-        run: python -m unittest tests.test_installer tests.test_wyckoff_engine_v2 -v
+        run: python -m unittest tests.test_installer tests.test_release_workflow tests.test_vpa_cli tests.test_wyckoff_engine_v2 -v
 
       - name: Build release archive
         run: python -m installer.build_release --output-dir dist

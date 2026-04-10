@@ -1,4 +1,4 @@
-"""Install the Wyckoff VPA runtime and per-agent adapters."""
+"""Install or uninstall the Wyckoff VPA runtime and per-agent adapters."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from __version__ import __version__
 
 
 SKILL_NAME = "wyckoff-vpa"
+REPO_URL = "https://github.com/tedeyang/wyckoffsoulskill"
+RELEASES_URL = f"{REPO_URL}/releases"
 SUPPORTED_TARGETS = ("codex", "claudecode", "kimi", "openclaw")
 CORE_FILES = (
     "SKILL.md",
@@ -111,7 +113,6 @@ def _write_launcher(runtime_root: Path) -> Path:
             f"""\
             @echo off
             setlocal
-            set "RUNTIME_ROOT={runtime_root}"
             set "APP_DIR={app_dir}"
             if exist "{venv_python}" (
               "{venv_python}" "%APP_DIR%\\vpa.py" %*
@@ -125,7 +126,6 @@ def _write_launcher(runtime_root: Path) -> Path:
             f"""\
             #!/usr/bin/env bash
             set -euo pipefail
-            RUNTIME_ROOT="{runtime_root}"
             APP_DIR="{app_dir}"
             if [[ -x "{venv_python}" ]]; then
               exec "{venv_python}" "$APP_DIR/vpa.py" "$@"
@@ -151,22 +151,25 @@ def _codex_skill_text(command: Path, target: str) -> str:
 
         # Wyckoff VPA
 
-        Use the installed launcher instead of repo-local Python commands.
+        Install from `{REPO_URL}` or a release zip from `{RELEASES_URL}`.
 
-        ## Workflow
+        ## Use
 
-        1. Resolve first:
-           `{command} resolve "<query>"`
-        2. Analyze:
-           `{command} analyze "<query>"`
-        3. Use `--analysis-mode deep` only for 长线 or 深度研究.
+        - Analyze by name or code: `{command} "<query>"`
+        - Deep mode: `{command} "<query>" --deep`
 
-        ## Guardrails
+        ## Rules
 
-        - If `requires_clarification=true`, ask the user to choose from `matches`.
+        - Run one command only. Do not call a separate resolve step.
+        - If the payload returns `matches`, show the candidate names and codes and ask the user to rerun with a more precise query.
         - During live trading, prefer `raw_market_facts.live_session` over prior close.
-        - Evidence before conclusion: read `event_candidates`, `effort_result`, and `absorption_and_acceptance`.
+        - Explain evidence before recommendations.
         - Plain-language answers must avoid jargon and must not invent levels absent from the payload.
+
+        ## Install Or Remove
+
+        - Install: `python -m installer.install install --target {target}`
+        - Uninstall: `python -m installer.install uninstall --target {target}`
         """
     )
 
@@ -177,18 +180,28 @@ def _generic_prompt_text(command: Path, target: str) -> str:
         f"""\
         # Wyckoff VPA Adapter For {display}
 
-        Use the local launcher below for A-share analysis:
+        Source:
 
-        - Resolve: `{command} resolve "<query>"`
-        - Analyze: `{command} analyze "<query>"`
-        - Deep mode: `{command} analyze "<query>" --analysis-mode deep`
+        - Repo: {REPO_URL}
+        - Releases: {RELEASES_URL}
+
+        Use:
+
+        - Analyze by name or code: `{command} "<query>"`
+        - Deep mode: `{command} "<query>" --deep`
 
         Rules:
 
-        - Resolve first. If the response asks for clarification, do not guess.
+        - Do not run a separate resolve step.
+        - If the payload returns `matches`, show those candidates and ask the user to rerun with a more precise name or 6-digit code.
         - Treat `raw_market_facts.live_session` as the live price source during the trading session.
         - Explain evidence before recommendations.
         - In plain-language mode, avoid jargon and do not invent support, stop, or target levels.
+
+        Local lifecycle:
+
+        - Install: `python -m installer.install install --target {target} --adapters-root ./adapters-out`
+        - Uninstall: `python -m installer.install uninstall --target {target} --adapters-root ./adapters-out`
         """
     )
 
@@ -199,20 +212,19 @@ def _render_adapter(target: str, command: Path) -> tuple[str, str]:
     return "PROMPT.md", _generic_prompt_text(command, target)
 
 
+def _adapter_root_for_target(target: str, adapters_root: Path | None) -> Path | None:
+    if adapters_root is not None:
+        return adapters_root / target
+    return default_adapter_dir(target)
+
+
 def _write_adapters(runtime_root: Path, targets: Iterable[str], adapters_root: Path | None) -> list[Path]:
     created: list[Path] = []
     command = launcher_path(runtime_root)
 
     for target in targets:
         file_name, content = _render_adapter(target, command)
-        destination_root = None
-        if adapters_root is not None:
-            destination_root = adapters_root / target
-        else:
-            default_root = default_adapter_dir(target)
-            if default_root is not None:
-                destination_root = default_root
-
+        destination_root = _adapter_root_for_target(target, adapters_root)
         if destination_root is None:
             continue
 
@@ -252,9 +264,29 @@ def install_package(
     }
 
 
+def uninstall_package(
+    runtime_root: Path,
+    targets: Sequence[str],
+    adapters_root: Path | None = None,
+) -> dict[str, object]:
+    removed_paths: list[Path] = []
+
+    if runtime_root.exists():
+        shutil.rmtree(runtime_root)
+        removed_paths.append(runtime_root)
+
+    for target in targets:
+        destination_root = _adapter_root_for_target(target, adapters_root)
+        if destination_root is not None and destination_root.exists():
+            shutil.rmtree(destination_root)
+            removed_paths.append(destination_root)
+
+    return {"runtime_root": runtime_root, "targets": list(targets), "paths": removed_paths}
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Install the Wyckoff VPA runtime and agent adapters",
+        description="Install or uninstall the Wyckoff VPA runtime and agent adapters",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -286,6 +318,25 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip dependency installation even when a virtual environment is created",
     )
+
+    uninstall_parser = subparsers.add_parser("uninstall", help="Remove runtime and adapters")
+    uninstall_parser.add_argument(
+        "--target",
+        default="codex",
+        help="Target adapter(s): codex, claudecode, kimi, openclaw, all, or a comma-separated list",
+    )
+    uninstall_parser.add_argument(
+        "--runtime-root",
+        type=Path,
+        default=default_runtime_root(),
+        help="Directory for the shared runtime bundle",
+    )
+    uninstall_parser.add_argument(
+        "--adapters-root",
+        type=Path,
+        default=None,
+        help="Optional directory used for exported adapters",
+    )
     return parser
 
 
@@ -293,29 +344,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command != "install":
-        parser.print_help()
-        return 1
+    if args.command == "install":
+        targets = resolve_targets(args.target)
+        result = install_package(
+            source_root=Path(__file__).resolve().parents[1],
+            runtime_root=args.runtime_root,
+            targets=targets,
+            adapters_root=args.adapters_root,
+            create_venv=not args.skip_venv,
+            install_deps=not args.skip_deps,
+        )
 
-    targets = resolve_targets(args.target)
-    result = install_package(
-        source_root=Path(__file__).resolve().parents[1],
-        runtime_root=args.runtime_root,
-        targets=targets,
-        adapters_root=args.adapters_root,
-        create_venv=not args.skip_venv,
-        install_deps=not args.skip_deps,
-    )
+        print(f"Installed Wyckoff VPA {result['version']} into {result['runtime_root']}")
+        print(f"Launcher: {result['launcher']}")
+        if result["adapters"]:
+            print("Adapters:")
+            for adapter in result["adapters"]:
+                print(f"  - {adapter}")
+        else:
+            print("No adapters were written automatically. Pass --adapters-root for manual export targets.")
+        return 0
 
-    print(f"Installed Wyckoff VPA {result['version']} into {result['runtime_root']}")
-    print(f"Launcher: {result['launcher']}")
-    if result["adapters"]:
-        print("Adapters:")
-        for adapter in result["adapters"]:
-            print(f"  - {adapter}")
-    else:
-        print("No adapters were written automatically. Pass --adapters-root for manual export targets.")
-    return 0
+    if args.command == "uninstall":
+        targets = resolve_targets(args.target)
+        result = uninstall_package(
+            runtime_root=args.runtime_root,
+            targets=targets,
+            adapters_root=args.adapters_root,
+        )
+        print(f"Removed {len(result['paths'])} path(s)")
+        for path in result["paths"]:
+            print(f"  - {path}")
+        return 0
+
+    parser.print_help()
+    return 1
 
 
 if __name__ == "__main__":
